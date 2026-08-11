@@ -1,10 +1,10 @@
 use anyhow::Result;
-use chrono::{Duration, Utc};
+use chrono::{DateTime, Duration, Utc};
 use deadpool_postgres::{Config, Pool, Runtime};
 use rand::Rng;
+use telenotes_core::{Item, Stats};
 use uuid::Uuid;
 
-use crate::models::{Item, Stats};
 use crate::storage::Backend;
 
 /// Columns selected for `row_to_item`. Listed explicitly rather than `SELECT
@@ -56,23 +56,26 @@ pub async fn insert_note(
     content_text: &str,
     tags: &[String],
     storage_path: &str,
-) -> Result<()> {
+) -> Result<DateTime<Utc>> {
     let client = pool.get().await?;
-    client
-        .execute(
+    let row = client
+        .query_one(
             "INSERT INTO items (id, user_id, kind, content_text, tags, backend, storage_path)
-             VALUES ($1, $2, 'note', $3, $4, 'github', $5)",
+             VALUES ($1, $2, 'note', $3, $4, 'github', $5)
+             RETURNING created_at",
             &[&id, &user_id, &content_text, &tags, &storage_path],
         )
         .await?;
-    Ok(())
+    Ok(row.get("created_at"))
 }
 
 pub struct NewFile<'a> {
     pub kind: &'a str,
     pub content_text: Option<&'a str>,
-    pub file_id: &'a str,
-    pub file_unique_id: &'a str,
+    /// Telegram provenance. `None` for items created via the web/TUI write
+    /// API, which have no Telegram file to reference.
+    pub file_id: Option<&'a str>,
+    pub file_unique_id: Option<&'a str>,
     pub file_name: Option<&'a str>,
     pub mime_type: Option<&'a str>,
     pub file_size: Option<i64>,
@@ -81,7 +84,11 @@ pub struct NewFile<'a> {
     pub tags: &'a [String],
 }
 
-pub async fn insert_file(pool: &Pool, user_id: Uuid, f: NewFile<'_>) -> Result<Uuid> {
+pub async fn insert_file(
+    pool: &Pool,
+    user_id: Uuid,
+    f: NewFile<'_>,
+) -> Result<(Uuid, DateTime<Utc>)> {
     let client = pool.get().await?;
     let row = client
         .query_one(
@@ -89,7 +96,7 @@ pub async fn insert_file(pool: &Pool, user_id: Uuid, f: NewFile<'_>) -> Result<U
                 (user_id, kind, content_text, file_id, file_unique_id,
                  file_name, mime_type, file_size, backend, storage_path, tags)
              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-             RETURNING id",
+             RETURNING id, created_at",
             &[
                 &user_id,
                 &f.kind,
@@ -105,7 +112,69 @@ pub async fn insert_file(pool: &Pool, user_id: Uuid, f: NewFile<'_>) -> Result<U
             ],
         )
         .await?;
-    Ok(row.get("id"))
+    Ok((row.get("id"), row.get("created_at")))
+}
+
+/// Unscoped by `user_id` -- callers only reach this after already proving
+/// ownership via a claimed write token, mirroring how `item_for_download_token`
+/// needs no further check once the token itself is valid.
+pub async fn get_item(pool: &Pool, id: Uuid) -> Result<Option<Item>> {
+    let client = pool.get().await?;
+    let sql = format!("SELECT {ITEM_COLUMNS} FROM items WHERE id = $1");
+    let row = client.query_opt(&sql, &[&id]).await?;
+    Ok(row.as_ref().map(row_to_item))
+}
+
+/// `NULL` in any of the optional fields leaves that column untouched, via
+/// `COALESCE`. `items_set_updated_at` stamps `updated_at` automatically.
+pub async fn update_item(
+    pool: &Pool,
+    id: Uuid,
+    user_id: Uuid,
+    content_text: Option<&str>,
+    tags: Option<&[String]>,
+    file_name: Option<&str>,
+    mime_type: Option<&str>,
+) -> Result<Option<Item>> {
+    let client = pool.get().await?;
+    let sql = format!(
+        "UPDATE items SET
+           content_text = COALESCE($3, content_text),
+           tags         = COALESCE($4, tags),
+           file_name    = COALESCE($5, file_name),
+           mime_type    = COALESCE($6, mime_type)
+         WHERE id = $1 AND user_id = $2
+         RETURNING {ITEM_COLUMNS}"
+    );
+    let row = client
+        .query_opt(
+            &sql,
+            &[&id, &user_id, &content_text, &tags, &file_name, &mime_type],
+        )
+        .await?;
+    Ok(row.as_ref().map(row_to_item))
+}
+
+pub async fn set_notion_page_id(pool: &Pool, item_id: Uuid, page_id: &str) -> Result<()> {
+    let client = pool.get().await?;
+    client
+        .execute(
+            "UPDATE items SET notion_page_id = $2 WHERE id = $1",
+            &[&item_id, &page_id],
+        )
+        .await?;
+    Ok(())
+}
+
+pub async fn get_notion_page_id(pool: &Pool, item_id: Uuid) -> Result<Option<String>> {
+    let client = pool.get().await?;
+    let row = client
+        .query_opt(
+            "SELECT notion_page_id FROM items WHERE id = $1",
+            &[&item_id],
+        )
+        .await?;
+    Ok(row.and_then(|r| r.get("notion_page_id")))
 }
 
 fn row_to_item(row: &tokio_postgres::Row) -> Item {
@@ -308,7 +377,46 @@ pub async fn purge_expired(pool: &Pool) -> Result<()> {
     client
         .execute("DELETE FROM download_tokens WHERE expires_at < now()", &[])
         .await?;
+    client
+        .execute("DELETE FROM action_tokens WHERE expires_at < now()", &[])
+        .await?;
     Ok(())
+}
+
+/// What a claimed write token proves: which user minted it, and (for
+/// edit_item/delete_item) which item it's bound to.
+pub struct ActionToken {
+    pub user_id: Uuid,
+    pub item_id: Option<Uuid>,
+}
+
+/// Redeems a token minted by `issue_write_token`, for exactly the purpose it
+/// was minted for. The `UPDATE ... RETURNING` is the whole single-use
+/// enforcement mechanism: it's atomic under Postgres's row lock, so two
+/// concurrent requests racing the same token can't both succeed -- the loser
+/// gets zero rows back, same as an already-used or expired token.
+pub async fn claim_write_token(
+    pool: &Pool,
+    token: &str,
+    expected_purpose: &str,
+) -> Result<Option<ActionToken>> {
+    if token.len() != 48 || !token.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Ok(None);
+    }
+    let client = pool.get().await?;
+    let row = client
+        .query_opt(
+            "UPDATE action_tokens
+             SET used_at = now()
+             WHERE token = $1 AND purpose = $2 AND used_at IS NULL AND expires_at > now()
+             RETURNING user_id, item_id",
+            &[&token, &expected_purpose],
+        )
+        .await?;
+    Ok(row.as_ref().map(|r| ActionToken {
+        user_id: r.get("user_id"),
+        item_id: r.get("item_id"),
+    }))
 }
 
 /// Redeems a download token minted by `issue_download_token`. Returns the item

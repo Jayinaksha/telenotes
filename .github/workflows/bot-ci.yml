@@ -1,22 +1,24 @@
 name: bot-ci
 
 # Path-filtered on purpose: this repo is private, so Actions minutes are
-# metered and a Rust build is not cheap. Nothing here runs unless the bot
-# itself changed.
+# metered and a Rust build is not cheap. Nothing here runs unless the
+# workspace (bot, shared core, or TUI) changed.
 
 on:
   push:
     paths:
       - "telenotes-bot/**"
+      - "telenotes-core/**"
+      - "telenotes-tui/**"
+      - "Cargo.toml"
       - ".github/workflows/bot-ci.yml"
   pull_request:
     paths:
       - "telenotes-bot/**"
+      - "telenotes-core/**"
+      - "telenotes-tui/**"
+      - "Cargo.toml"
   workflow_dispatch: {}
-
-defaults:
-  run:
-    working-directory: telenotes-bot
 
 jobs:
   check:
@@ -29,9 +31,7 @@ jobs:
           components: clippy, rustfmt
 
       - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: telenotes-bot
 
-      - run: cargo fmt --check
-      - run: cargo clippy --all-targets -- -D warnings
-      - run: cargo test
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace

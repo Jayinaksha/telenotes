@@ -2,6 +2,9 @@
 .DS_Store
 *.swp
 
+# Cargo workspace build output lands here now, not under telenotes-bot/.
+/target
+
 # Belt-and-braces: telenotes-bot/.gitignore already covers these, but a
 # stray .env anywhere in the tree must never be committed.
 .env

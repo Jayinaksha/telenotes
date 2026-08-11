@@ -2,7 +2,29 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::storage::Backend;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Backend {
+    GitHub,
+    R2,
+}
+
+impl Backend {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Backend::GitHub => "github",
+            Backend::R2 => "r2",
+        }
+    }
+
+    /// Parses the `backend` column. Rows written before R2 support existed
+    /// have no value, and those were all GitHub.
+    pub fn parse(s: Option<&str>) -> Self {
+        match s {
+            Some("r2") => Backend::R2,
+            _ => Backend::GitHub,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Item {
@@ -30,7 +52,8 @@ impl Item {
         Backend::parse(self.backend.as_deref())
     }
 
-    /// One-line summary used in /notes, /files and /search listings.
+    /// One-line summary used in /notes, /files and /search listings, and by
+    /// the TUI's list view.
     pub fn summary(&self) -> String {
         let short_id = self.short_id();
         match self.kind.as_str() {
@@ -53,7 +76,7 @@ impl Item {
     }
 }
 
-/// Counts shown by /stats.
+/// Counts shown by /stats and the dashboard/TUI stats panel.
 pub struct Stats {
     pub notes: i64,
     pub files: i64,

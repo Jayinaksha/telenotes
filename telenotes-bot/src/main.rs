@@ -1,24 +1,31 @@
+mod api;
 mod config;
 mod db;
 mod handlers;
-mod models;
 mod notion;
 mod storage;
 
 use std::sync::Arc;
 
-use axum::extract::{Path, State};
-use axum::http::{HeaderMap, StatusCode};
+use anyhow::Context;
+use axum::extract::{DefaultBodyLimit, Path, State};
+use axum::http::{header, HeaderMap, HeaderValue, Method, StatusCode};
 use axum::response::{IntoResponse, Redirect, Response};
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use deadpool_postgres::Pool;
 use teloxide::prelude::*;
 use teloxide::types::{BotCommand, Update};
+use tower_http::cors::CorsLayer;
 
 use config::Config;
 use notion::NotionClient;
 use storage::{GitHubStore, R2Store, Vault};
+
+/// Upload bodies are proxied through the bot rather than presigned, so bytes
+/// land in one place regardless of which storage backend is active. Kept
+/// comfortably under GitHub's 45MB Contents API ceiling.
+const MAX_UPLOAD_BYTES: usize = 25 * 1024 * 1024;
 
 /// Telegram echoes this header back on every webhook delivery. Checking it is
 /// what stops anyone who guesses the URL from injecting fake updates.
@@ -113,6 +120,19 @@ async fn main() -> anyhow::Result<()> {
         tracing::warn!("could not register command menu: {e:?}");
     }
 
+    // These are reached via `fetch()` from the dashboard's origin, unlike
+    // `/d/{token}` (plain browser navigation, no preflight involved) -- hence
+    // the CORS layer scoped to just this sub-router.
+    let cors = CorsLayer::new()
+        .allow_origin(
+            config
+                .dashboard_origin
+                .parse::<HeaderValue>()
+                .context("DASHBOARD_ORIGIN is not a valid header value")?,
+        )
+        .allow_methods([Method::POST, Method::DELETE])
+        .allow_headers([header::CONTENT_TYPE]);
+
     let state = AppState {
         bot,
         config: Arc::new(config),
@@ -122,12 +142,21 @@ async fn main() -> anyhow::Result<()> {
         http,
     };
 
+    let api = Router::new()
+        .route("/api/notes", post(api::create_note_handler))
+        .route("/api/items/{item_id}/edit", post(api::edit_item_handler))
+        .route("/api/items/{item_id}", delete(api::delete_item_handler))
+        .route("/api/files", post(api::upload_file_handler))
+        .layer(DefaultBodyLimit::max(MAX_UPLOAD_BYTES))
+        .layer(cors);
+
     let app = Router::new()
         .route("/webhook", post(webhook_handler))
         .route("/health", get(health_handler))
         // Reached by plain browser navigation from the dashboard, so no CORS
         // preflight is involved.
         .route("/d/{token}", get(download_handler))
+        .merge(api)
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(("0.0.0.0", port)).await?;

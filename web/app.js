@@ -1,9 +1,15 @@
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { SUPABASE_URL, SUPABASE_ANON_KEY, BOT_URL } from "./config.js";
-
-// ---------------------------------------------------------------------------
-// Setup
-// ---------------------------------------------------------------------------
+import { SUPABASE_URL } from "./config.js";
+import {
+  getSession,
+  hasLinkedAccount,
+  linkTelegram,
+  onAuthStateChange,
+  signIn,
+  signOut,
+} from "./supabase.js";
+import * as api from "./api.js";
+import { fetchItems, fetchStats, fetchTags } from "./data.js";
+import { flash, only, renderItems, renderStats, renderTags, show } from "./render.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -12,31 +18,13 @@ if (SUPABASE_URL.includes("YOUR-PROJECT-REF")) {
   throw new Error("unconfigured");
 }
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-
 const state = {
-  kind: "",       // "", "note", or "file"
+  kind: "", // "", "note", or "file"
   tag: null,
   query: "",
   items: [],
+  editingId: null,
 };
-
-function show(el, text) {
-  if (text !== undefined) el.textContent = text;
-  el.hidden = false;
-}
-
-function only(viewId) {
-  for (const id of ["view-auth", "view-link", "view-main"]) {
-    $(id).hidden = id !== viewId;
-  }
-}
-
-function flash(el, text, bad = false) {
-  el.textContent = text;
-  el.classList.toggle("bad", bad);
-  el.hidden = false;
-}
 
 // ---------------------------------------------------------------------------
 // Auth
@@ -47,35 +35,32 @@ $("form-signin").addEventListener("submit", async (e) => {
   const email = $("email").value.trim();
   // Come back to this exact page, minus any stale token fragment.
   const redirect = location.origin + location.pathname;
-  const { error } = await supabase.auth.signInWithOtp({
-    email,
-    options: { emailRedirectTo: redirect },
-  });
-  flash($("auth-msg"),
-    error ? error.message : `Check ${email} for a sign-in link.`,
-    Boolean(error));
+  const { error } = await signIn(email, redirect);
+  flash($("auth-msg"), error ? error.message : `Check ${email} for a sign-in link.`, Boolean(error));
 });
 
 $("signout").addEventListener("click", async () => {
-  await supabase.auth.signOut();
+  await signOut();
   location.reload();
 });
 
 $("form-link").addEventListener("submit", async (e) => {
   e.preventDefault();
   const code = $("linkcode").value.trim().toUpperCase();
-  const { data, error } = await supabase.rpc("link_telegram", { code });
+  const { data, error } = await linkTelegram(code);
 
   if (error) return flash($("link-msg"), error.message, true);
   if (data === "ok") {
     flash($("link-msg"), "Connected.");
     return route();
   }
-  flash($("link-msg"),
+  flash(
+    $("link-msg"),
     data === "not_signed_in"
       ? "Session expired — sign in again."
       : "That code is invalid or has expired. Send /link again.",
-    true);
+    true,
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -83,7 +68,7 @@ $("form-link").addEventListener("submit", async (e) => {
 // ---------------------------------------------------------------------------
 
 async function route() {
-  const { data: { session } } = await supabase.auth.getSession();
+  const session = await getSession();
 
   if (!session) {
     $("signout").hidden = true;
@@ -94,47 +79,35 @@ async function route() {
   $("signout").hidden = false;
   $("account").textContent = session.user.email;
 
-  // RLS returns our own row and nothing else, so a hit here means this login
-  // is already bound to a Telegram account.
-  const { data: rows, error } = await supabase.from("users").select("id").limit(1);
-  if (error) return show($("boot-error"), error.message);
-  if (!rows || rows.length === 0) return only("view-link");
+  let linked;
+  try {
+    linked = await hasLinkedAccount();
+  } catch (e) {
+    return show($("boot-error"), e.message);
+  }
+  if (!linked) return only("view-link");
 
   only("view-main");
   await Promise.all([loadTags(), loadItems()]);
 }
 
-supabase.auth.onAuthStateChange(() => route());
+onAuthStateChange(() => route());
 
 // ---------------------------------------------------------------------------
 // Data
 // ---------------------------------------------------------------------------
 
 async function loadItems() {
-  let rows, error;
-
-  if (state.query) {
-    ({ data: rows, error } = await supabase.rpc("search_items", {
-      q: state.query,
-      lim: 200,
-    }));
-  } else {
-    let q = supabase
-      .from("items")
-      .select("*")
-      .order("created_at", { ascending: false })
-      .limit(200);
-    if (state.kind === "note") q = q.eq("kind", "note");
-    else if (state.kind === "file") q = q.neq("kind", "note");
-    if (state.tag) q = q.contains("tags", [state.tag]);
-    ({ data: rows, error } = await q);
+  let rows;
+  try {
+    rows = await fetchItems({ query: state.query, kind: state.kind, tag: state.tag });
+  } catch (e) {
+    return show($("boot-error"), e.message);
   }
-
-  if (error) return show($("boot-error"), error.message);
 
   // Search runs server-side without the facet filters, so apply them here to
   // keep the two paths showing the same thing.
-  state.items = (rows ?? []).filter((it) => {
+  state.items = rows.filter((it) => {
     if (state.kind === "note" && it.kind !== "note") return false;
     if (state.kind === "file" && it.kind === "note") return false;
     if (state.tag && !(it.tags ?? []).includes(state.tag)) return false;
@@ -145,29 +118,17 @@ async function loadItems() {
 }
 
 async function loadTags() {
-  const { data, error } = await supabase.rpc("tag_counts");
-  if (error) return;
-
-  const box = $("tags");
-  box.replaceChildren();
-
-  const all = document.createElement("button");
-  all.textContent = "All tags";
-  all.classList.toggle("active", state.tag === null);
-  all.onclick = () => { state.tag = null; loadTags(); loadItems(); };
-  box.append(all);
-
-  for (const { tag, n } of data ?? []) {
-    const b = document.createElement("button");
-    b.classList.toggle("active", state.tag === tag);
-    b.append(`#${tag}`);
-    const count = document.createElement("span");
-    count.className = "count";
-    count.textContent = n;
-    b.append(count);
-    b.onclick = () => { state.tag = state.tag === tag ? null : tag; loadTags(); loadItems(); };
-    box.append(b);
+  let data;
+  try {
+    data = await fetchTags();
+  } catch {
+    return;
   }
+  renderTags(data, state.tag, (tag) => {
+    state.tag = tag;
+    loadTags();
+    loadItems();
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -175,90 +136,26 @@ async function loadTags() {
 // ---------------------------------------------------------------------------
 
 function render() {
-  const box = $("results");
-  box.replaceChildren();
-
-  if (state.items.length === 0) {
-    const p = document.createElement("p");
-    p.className = "empty";
-    p.textContent = state.query
-      ? `Nothing matches “${state.query}”.`
-      : "Nothing here yet. Send your bot a message.";
-    box.append(p);
-    return;
-  }
-
-  for (const item of state.items) box.append(renderItem(item));
-}
-
-function renderItem(item) {
-  const el = document.createElement("article");
-  el.className = "item";
-
-  const head = document.createElement("div");
-  head.className = "item-head";
-
-  const kind = document.createElement("span");
-  kind.className = "kind";
-  kind.textContent = item.kind;
-  head.append(kind);
-
-  if (item.kind !== "note" && item.file_name) {
-    const name = document.createElement("strong");
-    name.textContent = item.file_name;
-    head.append(name);
-  }
-
-  const date = document.createElement("span");
-  date.className = "item-date";
-  date.textContent = new Date(item.created_at).toLocaleDateString(undefined, {
-    year: "numeric", month: "short", day: "numeric",
+  renderItems(state.items, state.query, state.editingId, {
+    onDownload,
+    onEdit: (item) => {
+      state.editingId = item.id;
+      render();
+    },
+    onCancelEdit: () => {
+      state.editingId = null;
+      render();
+    },
+    onSaveEdit,
+    onDelete,
   });
-  head.append(date);
-  el.append(head);
-
-  // textContent throughout: note bodies are arbitrary user text and must
-  // never be parsed as HTML.
-  if (item.content_text) {
-    const body = document.createElement("p");
-    body.className = "item-body";
-    body.textContent = item.content_text;
-    el.append(body);
-  }
-
-  if (item.kind !== "note" && item.storage_path) {
-    const btn = document.createElement("button");
-    btn.className = "download";
-    btn.textContent = "Download";
-    btn.onclick = () => download(item, btn);
-    el.append(btn);
-  }
-
-  if (item.tags?.length) {
-    const tags = document.createElement("div");
-    tags.className = "item-tags";
-    for (const t of item.tags) {
-      const s = document.createElement("span");
-      s.textContent = `#${t}`;
-      tags.append(s);
-    }
-    el.append(tags);
-  }
-
-  return el;
 }
 
-/// Swaps an item id for a short-lived token, then lets the bot service serve
-/// the bytes. The browser never sees storage credentials.
-async function download(item, btn) {
+async function onDownload(item, btn) {
   btn.disabled = true;
   btn.textContent = "Preparing…";
   try {
-    const { data: token, error } = await supabase.rpc("issue_download_token", {
-      item_id: item.id,
-    });
-    if (error) throw error;
-    window.open(`${BOT_URL}/d/${token}`, "_blank", "noopener");
+    await api.download(item);
     btn.textContent = "Download";
   } catch (e) {
     btn.textContent = "Failed — retry";
@@ -268,6 +165,83 @@ async function download(item, btn) {
   }
 }
 
+async function onSaveEdit(item, patch) {
+  try {
+    await api.editItem(item.id, patch);
+    state.editingId = null;
+    await loadItems();
+  } catch (e) {
+    flash($("boot-error"), e.message, true);
+  }
+}
+
+async function onDelete(item, btn) {
+  if (!confirm(`Delete this ${item.kind}? This also removes the stored file.`)) return;
+  btn.disabled = true;
+  try {
+    await api.deleteItem(item.id);
+    await loadItems();
+  } catch (e) {
+    btn.disabled = false;
+    flash($("boot-error"), e.message, true);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Add note / upload file
+// ---------------------------------------------------------------------------
+
+$("form-note").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const input = $("note-text");
+  const text = input.value.trim();
+  if (!text) return;
+  const msg = $("note-msg");
+  try {
+    await api.addNote(text);
+    input.value = "";
+    flash(msg, "Saved.");
+    await loadItems();
+  } catch (err) {
+    flash(msg, err.message, true);
+  }
+});
+
+$("form-upload").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const fileInput = $("upload-file");
+  const file = fileInput.files[0];
+  const msg = $("upload-msg");
+  if (!file) return flash(msg, "Choose a file first.", true);
+  try {
+    await api.uploadFile(file, $("upload-kind").value, $("upload-caption").value.trim());
+    fileInput.value = "";
+    $("upload-caption").value = "";
+    flash(msg, "Uploaded.");
+    await loadItems();
+  } catch (err) {
+    flash(msg, err.message, true);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Stats
+// ---------------------------------------------------------------------------
+
+$("nav-stats").addEventListener("click", async () => {
+  let tags, stats;
+  try {
+    [tags, stats] = await Promise.all([fetchTags(), fetchStats()]);
+  } catch (e) {
+    flash($("boot-error"), e.message, true);
+    return;
+  }
+  renderStats(tags, stats.days, stats.storage);
+  only("view-stats");
+});
+
+$("stats-back").addEventListener("click", () => only("view-main"));
+
 // ---------------------------------------------------------------------------
 // Controls
 // ---------------------------------------------------------------------------
@@ -276,7 +250,10 @@ let searchTimer;
 $("search").addEventListener("input", (e) => {
   clearTimeout(searchTimer);
   const value = e.target.value.trim();
-  searchTimer = setTimeout(() => { state.query = value; loadItems(); }, 250);
+  searchTimer = setTimeout(() => {
+    state.query = value;
+    loadItems();
+  }, 250);
 });
 
 for (const chip of document.querySelectorAll(".chip")) {

@@ -1,13 +1,12 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use chrono::Datelike;
-use regex::Regex;
-use std::sync::OnceLock;
+use telenotes_core::text::{extract_tags, sanitize, slugify};
+use telenotes_core::Item;
 use teloxide::prelude::*;
 use teloxide::types::{FileId, FileMeta, InputFile, MessageKind, Update, UpdateKind};
 use uuid::Uuid;
 
 use crate::db::{self, NewFile};
-use crate::models::Item;
 use crate::notion::NotionPage;
 use crate::AppState;
 
@@ -18,29 +17,12 @@ const TELEGRAM_DOWNLOAD_LIMIT: i64 = 20 * 1024 * 1024;
 
 const LIST_LIMIT: i64 = 20;
 
-fn tag_regex() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    // Compiled once: rebuilding this per message was measurable overhead and
-    // the old code also unwrapped on every call.
-    RE.get_or_init(|| Regex::new(r"#(\w+)").expect("tag regex is valid"))
-}
-
 pub async fn handle_update(state: AppState, update: Update) {
     if let UpdateKind::Message(msg) = update.kind {
         if let Err(e) = handle_message(&state, msg).await {
             tracing::error!("error handling message: {e:?}");
         }
     }
-}
-
-fn extract_tags(text: &str) -> Vec<String> {
-    let mut tags: Vec<String> = tag_regex()
-        .captures_iter(text)
-        .map(|c| c[1].to_lowercase())
-        .collect();
-    tags.sort();
-    tags.dedup();
-    tags
 }
 
 async fn handle_message(state: &AppState, msg: Message) -> Result<()> {
@@ -139,39 +121,15 @@ async fn handle_message(state: &AppState, msg: Message) -> Result<()> {
 // Notes
 // ---------------------------------------------------------------------------
 
-/// Turns a note's first line into a filesystem-safe slug for the vault.
-fn slugify(text: &str) -> String {
-    let slug: String = text
-        .lines()
-        .next()
-        .unwrap_or_default()
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() {
-                c.to_ascii_lowercase()
-            } else {
-                '-'
-            }
-        })
-        .collect::<String>()
-        .split('-')
-        .filter(|s| !s.is_empty())
-        .take(8)
-        .collect::<Vec<_>>()
-        .join("-");
-    if slug.is_empty() {
-        "note".to_string()
-    } else {
-        slug
-    }
-}
-
 /// Postgres is the source of truth for a note, so the row is written first and
 /// the markdown mirror is best-effort. Losing the mirror is recoverable;
 /// losing the note because GitHub was briefly unavailable is not.
-async fn save_note(state: &AppState, chat_id: ChatId, user_id: Uuid, text: &str) -> Result<()> {
+///
+/// Shared by the Telegram path (`save_note`) and the dashboard/TUI write API
+/// (`api::create_note_handler`).
+pub(crate) async fn create_note(state: &AppState, user_id: Uuid, text: &str) -> Result<Item> {
     let id = Uuid::new_v4();
-    let short = &id.to_string()[..8];
+    let short = id.to_string()[..8].to_string();
     let tags = extract_tags(text);
     let now = chrono::Utc::now();
 
@@ -183,7 +141,7 @@ async fn save_note(state: &AppState, chat_id: ChatId, user_id: Uuid, text: &str)
         slugify(text)
     );
 
-    db::insert_note(&state.db, id, user_id, text, &tags, &path).await?;
+    let created_at = db::insert_note(&state.db, id, user_id, text, &tags, &path).await?;
 
     let frontmatter = format!(
         "---\nid: {id}\ncreated: {}\ntags: [{}]\n---\n\n{text}\n",
@@ -198,24 +156,49 @@ async fn save_note(state: &AppState, chat_id: ChatId, user_id: Uuid, text: &str)
         tracing::warn!("note {short} saved to Postgres but not mirrored to GitHub: {e:?}");
     }
 
-    mirror_to_notion(
+    if let Some(page_id) = mirror_to_notion(
         state,
         NotionPage {
             title: text.lines().next().unwrap_or("note"),
             kind: "note",
             body: Some(text),
             tags: &tags,
-            short_id: short,
+            short_id: &short,
         },
     )
-    .await;
+    .await
+    {
+        if let Err(e) = db::set_notion_page_id(&state.db, id, &page_id).await {
+            tracing::warn!("note {short} mirrored to Notion but page id not saved: {e:?}");
+        }
+    }
 
-    let suffix = if tags.is_empty() {
+    Ok(Item {
+        id,
+        user_id,
+        kind: "note".to_string(),
+        content_text: Some(text.to_string()),
+        file_id: None,
+        file_unique_id: None,
+        backend: Some("github".to_string()),
+        storage_path: Some(path),
+        file_name: None,
+        mime_type: None,
+        file_size: None,
+        tags,
+        created_at,
+    })
+}
+
+async fn save_note(state: &AppState, chat_id: ChatId, user_id: Uuid, text: &str) -> Result<()> {
+    let item = create_note(state, user_id, text).await?;
+    let suffix = if item.tags.is_empty() {
         String::new()
     } else {
         format!(
             " · {}",
-            tags.iter()
+            item.tags
+                .iter()
                 .map(|t| format!("#{t}"))
                 .collect::<Vec<_>>()
                 .join(" ")
@@ -223,7 +206,7 @@ async fn save_note(state: &AppState, chat_id: ChatId, user_id: Uuid, text: &str)
     };
     state
         .bot
-        .send_message(chat_id, format!("Saved note {short}{suffix}"))
+        .send_message(chat_id, format!("Saved note {}{suffix}", item.short_id()))
         .await
         .ok();
     Ok(())
@@ -232,6 +215,91 @@ async fn save_note(state: &AppState, chat_id: ChatId, user_id: Uuid, text: &str)
 // ---------------------------------------------------------------------------
 // Files
 // ---------------------------------------------------------------------------
+
+/// Shared by the Telegram path (`save_incoming_file`) and the dashboard/TUI
+/// write API (`api::upload_file_handler`). `file_id`/`file_unique_id` are
+/// `None` for uploads with no Telegram provenance.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn create_file(
+    state: &AppState,
+    user_id: Uuid,
+    kind: &str,
+    storage_path: &str,
+    bytes: Vec<u8>,
+    file_name: &str,
+    mime_type: Option<&str>,
+    caption: Option<&str>,
+    file_id: Option<&str>,
+    file_unique_id: Option<&str>,
+) -> Result<Item> {
+    let size = bytes.len() as i64;
+    let content_type = mime_type.unwrap_or("application/octet-stream");
+
+    // Bytes first: an orphaned blob is cheap to clean up, but a row pointing
+    // at a file that was never written is a broken item forever.
+    let backend = state
+        .vault
+        .put_file(
+            storage_path,
+            bytes,
+            content_type,
+            &format!("Add {kind}: {file_name}"),
+        )
+        .await?;
+
+    let tags = caption.map(extract_tags).unwrap_or_default();
+    let (id, created_at) = db::insert_file(
+        &state.db,
+        user_id,
+        NewFile {
+            kind,
+            content_text: caption,
+            file_id,
+            file_unique_id,
+            file_name: Some(file_name),
+            mime_type,
+            file_size: Some(size),
+            backend,
+            storage_path,
+            tags: &tags,
+        },
+    )
+    .await?;
+
+    let short = id.to_string()[..8].to_string();
+    if let Some(page_id) = mirror_to_notion(
+        state,
+        NotionPage {
+            title: file_name,
+            kind,
+            body: caption,
+            tags: &tags,
+            short_id: &short,
+        },
+    )
+    .await
+    {
+        if let Err(e) = db::set_notion_page_id(&state.db, id, &page_id).await {
+            tracing::warn!("file {short} mirrored to Notion but page id not saved: {e:?}");
+        }
+    }
+
+    Ok(Item {
+        id,
+        user_id,
+        kind: kind.to_string(),
+        content_text: caption.map(str::to_string),
+        file_id: file_id.map(str::to_string),
+        file_unique_id: file_unique_id.map(str::to_string),
+        backend: Some(backend.as_str().to_string()),
+        storage_path: Some(storage_path.to_string()),
+        file_name: Some(file_name.to_string()),
+        mime_type: mime_type.map(str::to_string),
+        file_size: Some(size),
+        tags,
+        created_at,
+    })
+}
 
 #[allow(clippy::too_many_arguments)]
 async fn save_incoming_file(
@@ -280,91 +348,185 @@ async fn save_incoming_file(
         .map(str::to_string)
         .unwrap_or_else(|| format!("{kind}_{}", meta.unique_id.0));
     let storage_path = format!("files/{user_id}/{}_{}", meta.unique_id.0, sanitize(&name));
-    let content_type = mime_type.unwrap_or("application/octet-stream");
 
-    // Bytes first: an orphaned blob is cheap to clean up, but a row pointing
-    // at a file that was never written is a broken item forever.
-    let backend = state
-        .vault
-        .put_file(
-            &storage_path,
-            bytes,
-            content_type,
-            &format!("Add {kind}: {name}"),
-        )
-        .await?;
-
-    let tags = caption.map(extract_tags).unwrap_or_default();
-    let id = db::insert_file(
-        &state.db,
+    let item = create_file(
+        state,
         user_id,
-        NewFile {
-            kind,
-            content_text: caption,
-            file_id: &meta.id.0,
-            file_unique_id: &meta.unique_id.0,
-            file_name: Some(&name),
-            mime_type,
-            file_size: Some(size),
-            backend,
-            storage_path: &storage_path,
-            tags: &tags,
-        },
+        kind,
+        &storage_path,
+        bytes,
+        &name,
+        mime_type,
+        caption,
+        Some(&meta.id.0),
+        Some(&meta.unique_id.0),
     )
     .await?;
-
-    let short = &id.to_string()[..8];
-    mirror_to_notion(
-        state,
-        NotionPage {
-            title: &name,
-            kind,
-            body: caption,
-            tags: &tags,
-            short_id: short,
-        },
-    )
-    .await;
 
     state
         .bot
         .send_message(
             chat_id,
-            format!("Saved {kind} {short} — {name} ({})", backend.as_str()),
+            format!(
+                "Saved {kind} {} — {name} ({})",
+                item.short_id(),
+                item.backend.as_deref().unwrap_or("github")
+            ),
         )
         .await
         .ok();
     Ok(())
 }
 
-/// Keeps a Telegram-supplied filename from escaping its directory or
-/// upsetting object-store key rules.
-fn sanitize(name: &str) -> String {
-    // Everything outside the safe set collapses to a single underscore, then
-    // leading/trailing separators and dots go. That turns "../../etc/passwd"
-    // into "etc_passwd" rather than a technically-safe but ugly "_.._etc...".
-    let mut out = String::new();
-    for c in name.chars() {
-        match c {
-            'a'..='z' | 'A'..='Z' | '0'..='9' | '.' | '-' => out.push(c),
-            _ if !out.ends_with('_') && !out.is_empty() => out.push('_'),
-            _ => {}
+/// Returns the new page's id on success, so callers can store it on the
+/// item's `notion_page_id` column for a later edit/delete to find again.
+async fn mirror_to_notion(state: &AppState, page: NotionPage<'_>) -> Option<String> {
+    let notion = state.notion.as_ref()?;
+    match notion.create_page(page).await {
+        Ok(page_id) => Some(page_id),
+        Err(e) => {
+            tracing::warn!("notion mirror failed: {e:?}");
+            None
         }
-    }
-
-    let trimmed = out.trim_matches(|c| c == '.' || c == '_' || c == '-');
-    if trimmed.is_empty() {
-        "file".to_string()
-    } else {
-        trimmed.chars().take(120).collect()
     }
 }
 
-async fn mirror_to_notion(state: &AppState, page: NotionPage<'_>) {
-    let Some(notion) = &state.notion else { return };
-    if let Err(e) = notion.create_page(page).await {
-        tracing::warn!("notion mirror failed: {e:?}");
+// ---------------------------------------------------------------------------
+// Edit and delete
+// ---------------------------------------------------------------------------
+
+/// Shared by the Telegram `/delete` command and `api::edit_item_handler`.
+/// `None` in any optional field leaves that column unchanged. `Ok(None)`
+/// means no such item for this user; a real failure is an `Err`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn edit_item(
+    state: &AppState,
+    user_id: Uuid,
+    item_id: Uuid,
+    content_text: Option<&str>,
+    tags: Option<&[String]>,
+    file_name: Option<&str>,
+    mime_type: Option<&str>,
+) -> Result<Option<Item>> {
+    let Some(item) = db::update_item(
+        &state.db,
+        item_id,
+        user_id,
+        content_text,
+        tags,
+        file_name,
+        mime_type,
+    )
+    .await?
+    else {
+        return Ok(None);
+    };
+
+    // Mirror sync is best-effort: Postgres already holds the authoritative
+    // edit, so a mirror failure here must never undo it, only be logged.
+    if item.kind == "note" && (content_text.is_some() || tags.is_some()) {
+        if let Some(path) = &item.storage_path {
+            let text = item.content_text.clone().unwrap_or_default();
+            let frontmatter = format!(
+                "---\nid: {}\ncreated: {}\ntags: [{}]\n---\n\n{text}\n",
+                item.id,
+                item.created_at.to_rfc3339(),
+                item.tags.join(", ")
+            );
+            if let Err(e) = state
+                .vault
+                .put_note(path, &frontmatter, &format!("edit: {}", item.short_id()))
+                .await
+            {
+                tracing::warn!(
+                    "note {} edited in Postgres but not remirrored to GitHub: {e:?}",
+                    item.short_id()
+                );
+            }
+        }
     }
+
+    if let Some(notion) = &state.notion {
+        match db::get_notion_page_id(&state.db, item.id).await {
+            Ok(Some(page_id)) => {
+                let short = item.short_id();
+                let title = if item.kind == "note" {
+                    item.content_text
+                        .as_deref()
+                        .and_then(|t| t.lines().next())
+                        .unwrap_or("note")
+                        .to_string()
+                } else {
+                    item.file_name
+                        .clone()
+                        .unwrap_or_else(|| format!("{} file", item.kind))
+                };
+                let page = NotionPage {
+                    title: &title,
+                    kind: &item.kind,
+                    body: item.content_text.as_deref(),
+                    tags: &item.tags,
+                    short_id: &short,
+                };
+                if let Err(e) = notion
+                    .update_page(&page_id, page, content_text.is_some())
+                    .await
+                {
+                    tracing::warn!("item {short} edited but Notion mirror update failed: {e:?}");
+                }
+            }
+            Ok(None) => {}
+            Err(e) => tracing::warn!(
+                "could not look up Notion page id for {}: {e:?}",
+                item.short_id()
+            ),
+        }
+    }
+
+    Ok(Some(item))
+}
+
+/// Shared by the Telegram `/delete` command and `api::delete_item_handler`.
+/// Removes the bytes before the row, so a storage failure leaves the item
+/// intact and retryable rather than orphaning a blob. `Ok(None)` means no
+/// such item for this user; a storage/db failure is an `Err`.
+pub(crate) async fn delete_item(
+    state: &AppState,
+    user_id: Uuid,
+    item_id: Uuid,
+) -> Result<Option<Item>> {
+    let Some(item) = db::get_item(&state.db, item_id).await? else {
+        return Ok(None);
+    };
+    if item.user_id != user_id {
+        return Ok(None);
+    }
+
+    if let Some(path) = &item.storage_path {
+        state
+            .vault
+            .delete(item.backend(), path, &format!("delete {}", item.short_id()))
+            .await
+            .with_context(|| format!("couldn't remove the stored file for {}", item.short_id()))?;
+    }
+
+    let notion_page_id = db::get_notion_page_id(&state.db, item.id)
+        .await
+        .ok()
+        .flatten();
+
+    db::delete_item(&state.db, user_id, item.id).await?;
+
+    if let (Some(notion), Some(page_id)) = (&state.notion, &notion_page_id) {
+        if let Err(e) = notion.archive_page(page_id).await {
+            tracing::warn!(
+                "item {} deleted but Notion mirror archive failed: {e:?}",
+                item.short_id()
+            );
+        }
+    }
+
+    Ok(Some(item))
 }
 
 // ---------------------------------------------------------------------------
@@ -429,32 +591,27 @@ async fn handle_command(
             }
         },
         "delete" => match db::get_item_by_short_id(&state.db, user_id, arg).await? {
-            Some(item) => {
-                // Remove the bytes before the row, so a storage failure leaves
-                // the item intact and retryable rather than orphaning a blob.
-                if let Some(path) = &item.storage_path {
-                    if let Err(e) = state
-                        .vault
-                        .delete(item.backend(), path, &format!("delete {}", item.short_id()))
-                        .await
-                    {
-                        tracing::error!("failed to delete blob for {}: {e:?}", item.short_id());
-                        state
-                            .bot
-                            .send_message(
-                                chat_id,
-                                "Couldn't remove the stored file; nothing deleted.",
-                            )
-                            .await?;
-                        return Ok(());
-                    }
+            Some(item) => match delete_item(state, user_id, item.id).await {
+                Ok(Some(deleted)) => {
+                    state
+                        .bot
+                        .send_message(chat_id, format!("Deleted {}.", deleted.short_id()))
+                        .await?;
                 }
-                db::delete_item(&state.db, user_id, item.id).await?;
-                state
-                    .bot
-                    .send_message(chat_id, format!("Deleted {}.", item.short_id()))
-                    .await?;
-            }
+                Ok(None) => {
+                    state
+                        .bot
+                        .send_message(chat_id, "Not found. Usage: /delete <id from a listing>")
+                        .await?;
+                }
+                Err(e) => {
+                    tracing::error!("failed to delete {}: {e:?}", item.short_id());
+                    state
+                        .bot
+                        .send_message(chat_id, "Couldn't remove the stored file; nothing deleted.")
+                        .await?;
+                }
+            },
             None => {
                 state
                     .bot
@@ -594,45 +751,3 @@ Commands:
 /stats - what you've captured so far
 /link - get a code to sign in to the web dashboard
 /help - this message";
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn tags_are_lowercased_sorted_and_deduped() {
-        assert_eq!(
-            extract_tags("a #Radar note about #SAR and #radar again"),
-            vec!["radar".to_string(), "sar".to_string()]
-        );
-    }
-
-    #[test]
-    fn text_without_tags_yields_none() {
-        assert!(extract_tags("no tags here").is_empty());
-    }
-
-    #[test]
-    fn slug_uses_first_line_and_bounds_length() {
-        assert_eq!(
-            slugify("Hello World: a test\nsecond line"),
-            "hello-world-a-test"
-        );
-        assert_eq!(slugify(""), "note");
-        assert_eq!(slugify("!!!"), "note");
-        assert_eq!(
-            slugify("one two three four five six seven eight nine")
-                .split('-')
-                .count(),
-            8
-        );
-    }
-
-    #[test]
-    fn sanitize_strips_path_traversal() {
-        assert_eq!(sanitize("../../etc/passwd"), "etc_passwd");
-        assert_eq!(sanitize("report final.pdf"), "report_final.pdf");
-        assert_eq!(sanitize(""), "file");
-        assert_eq!(sanitize("..."), "file");
-    }
-}

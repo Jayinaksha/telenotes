@@ -19,30 +19,10 @@ use anyhow::{bail, Result};
 
 pub use github::GitHubStore;
 pub use r2::R2Store;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Backend {
-    GitHub,
-    R2,
-}
-
-impl Backend {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Backend::GitHub => "github",
-            Backend::R2 => "r2",
-        }
-    }
-
-    /// Parses the `backend` column. Rows written before R2 support existed
-    /// have no value, and those were all GitHub.
-    pub fn parse(s: Option<&str>) -> Self {
-        match s {
-            Some("r2") => Backend::R2,
-            _ => Backend::GitHub,
-        }
-    }
-}
+// `Backend` lives in telenotes-core because `Item::backend()` (also there)
+// needs to return it -- re-exported here so existing `storage::Backend`
+// references throughout this crate keep working unchanged.
+pub use telenotes_core::Backend;
 
 #[derive(Clone)]
 pub struct Vault {

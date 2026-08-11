@@ -17,6 +17,9 @@ pub struct Config {
     pub github: GitHubConfig,
     pub r2: Option<R2Config>,
     pub notion: Option<NotionConfig>,
+    /// The dashboard's origin (e.g. `https://you.github.io`), the only
+    /// origin the `/api/*` write endpoints answer CORS preflights for.
+    pub dashboard_origin: String,
 }
 
 pub struct GitHubConfig {
@@ -120,6 +123,7 @@ impl Config {
             },
             r2,
             notion,
+            dashboard_origin: req("DASHBOARD_ORIGIN")?,
         })
     }
 

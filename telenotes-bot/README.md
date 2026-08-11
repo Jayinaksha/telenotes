@@ -1,11 +1,13 @@
 # telenotes-bot
 
 A Telegram bot that captures notes and files from your phone into storage you
-own, with full-text search and a web dashboard. Built to run entirely on free
-tiers.
+own, with full-text search, a web dashboard, and a terminal client. Built to
+run entirely on free tiers.
 
 Send it text and it's a searchable note. Send it a PDF, photo, voice memo or
-video and it's archived. Tag anything with `#like-this`.
+video and it's archived. Tag anything with `#like-this`. The dashboard
+(`../web`) and TUI (`../telenotes-tui`) can do the same — add, edit, upload,
+and delete — plus show basic stats: activity over time and storage by kind.
 
 **Setup instructions: [SETUP.md](SETUP.md).**
 
@@ -56,19 +58,26 @@ Ids are the 8-character prefix shown in listings.
 
 ```
 src/
-  main.rs        HTTP surface: webhook, health, download tokens
+  main.rs        HTTP surface: webhook, health, download tokens, /api/* wiring
+  api.rs         dashboard/TUI write endpoints: notes, edits, uploads, deletes
   config.rs      environment parsing, fails fast and loudly
-  handlers.rs    message and command handling
+  handlers.rs    Telegram command handling, and the create/edit/delete cores
+                 shared with api.rs
   db.rs          queries
-  models.rs      row types
-  notion.rs      optional one-way Notion mirror
+  notion.rs      optional one-way Notion mirror, kept in sync on edit/delete
   storage/
     mod.rs       Vault: routes notes to GitHub, files to R2
     github.rs    Contents API
     r2.rs        S3-compatible, presigned URLs only
 migrations/
   0001_init.sql  schema, RLS policies, RPCs
+  0002_write_api.sql  write-capability tokens, analytics RPCs
 ```
+
+Row types (`Item`, `Stats`) and the pure `extract_tags`/`slugify`/`sanitize`
+helpers live in [`../telenotes-core`](../telenotes-core), shared with
+[`../telenotes-tui`](../telenotes-tui). This crate is one member of that
+Cargo workspace, not a standalone package — see the root `Cargo.toml`.
 
 ## Design notes
 
@@ -98,12 +107,32 @@ capability token — issued only for rows you own, enforced by RLS — and hands
 it to the bot, which redirects to a presigned R2 URL. Storage credentials
 never leave the server, and the bot never has to verify a JWT.
 
+**Writes from the dashboard and TUI.** Same shape as downloads, extended:
+`issue_write_token` mints a token scoped to one purpose (`create_note`,
+`edit_item`, `upload_file`, `delete_item`) and, for edits/deletes, one item —
+re-checking ownership itself rather than trusting the caller. The bot claims
+it with a single atomic `UPDATE ... RETURNING`, which is what makes it
+actually single-use under concurrent requests, not just time-limited like a
+download token. `api.rs` holds the four HTTP handlers; `handlers.rs` holds
+the create/edit/delete logic they share with the Telegram command handlers,
+so there's exactly one code path for "make this note," not two that could
+drift.
+
 ## Development
 
+This crate is a member of the workspace rooted one directory up. Run
+commands from there to cover the bot, `telenotes-core`, and `telenotes-tui`
+together:
+
 ```bash
-cargo test
-cargo clippy --all-targets -- -D warnings
-cargo fmt
+cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings
+cargo fmt --all
 ```
 
-CI runs all three on any change under `telenotes-bot/`.
+Or from here, to work on just this crate: drop `--workspace`/`--all` and add
+`-p telenotes-bot` in front of `clippy`/`test` if you have uncommitted
+changes elsewhere in the workspace you don't want swept in.
+
+CI runs the workspace-wide commands on any change under `telenotes-bot/`,
+`telenotes-core/`, or `telenotes-tui/`.

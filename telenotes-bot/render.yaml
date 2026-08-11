@@ -3,7 +3,11 @@ services:
     name: telenotes-bot
     runtime: docker
     plan: free
-    rootDir: telenotes-bot
+    # Built from the repo root, not telenotes-bot/ -- the bot depends on
+    # ../telenotes-core via a path dependency, so Docker's build context has
+    # to see the whole workspace.
+    dockerfilePath: telenotes-bot/Dockerfile
+    dockerContext: .
     healthCheckPath: /health
     envVars:
       - key: BOT_TOKEN
@@ -14,6 +18,11 @@ services:
       - key: WEBHOOK_SECRET
         generateValue: true
       - key: ALLOWED_CHAT_IDS
+        sync: false
+      # Your GitHub Pages URL, no path, no trailing slash -- see SETUP.md
+      # step 7. The /api/* write endpoints only answer CORS preflights from
+      # this origin.
+      - key: DASHBOARD_ORIGIN
         sync: false
       - key: DATABASE_URL
         sync: false

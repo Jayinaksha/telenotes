@@ -53,6 +53,29 @@
         <button class="chip" data-kind="note">Notes</button>
         <button class="chip" data-kind="file">Files</button>
       </div>
+      <button id="nav-stats" class="ghost">Stats</button>
+    </div>
+
+    <div class="write-forms">
+      <form id="form-note" class="write-form">
+        <textarea id="note-text" rows="2" placeholder="Write a note… #tags work here too"></textarea>
+        <button type="submit">Add note</button>
+        <p id="note-msg" class="msg" hidden></p>
+      </form>
+
+      <form id="form-upload" class="write-form">
+        <input id="upload-file" type="file">
+        <select id="upload-kind">
+          <option value="document">Document</option>
+          <option value="photo">Photo</option>
+          <option value="voice">Voice</option>
+          <option value="video">Video</option>
+          <option value="audio">Audio</option>
+        </select>
+        <input id="upload-caption" placeholder="Caption (optional, #tags work here too)">
+        <button type="submit">Upload</button>
+        <p id="upload-msg" class="msg" hidden></p>
+      </form>
     </div>
 
     <div class="layout">
@@ -60,6 +83,19 @@
       <section id="results" class="results"></section>
     </div>
   </main>
+
+  <!-- Stats -->
+  <section id="view-stats" class="panel stats-panel" hidden>
+    <div class="stats-head">
+      <h2>Stats</h2>
+      <button id="stats-back" class="ghost">Back</button>
+    </div>
+    <div id="stats-tiles" class="stats-tiles"></div>
+    <h3>Last 30 days</h3>
+    <div id="stats-activity" class="stats-activity"></div>
+    <h3>Storage</h3>
+    <div id="stats-storage" class="stats-storage"></div>
+  </section>
 
   <p id="boot-error" class="panel error" hidden></p>
 

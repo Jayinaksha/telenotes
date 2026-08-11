@@ -89,8 +89,10 @@ frontmatter. They're readable directly on GitHub and diffable over time.
 1. [supabase.com](https://supabase.com) → New project. **Save the database
    password** — it's shown once and you need it for the connection string.
 2. SQL Editor → New query → paste all of
-   [`migrations/0001_init.sql`](migrations/0001_init.sql) → Run.
-   It's safe to re-run.
+   [`migrations/0001_init.sql`](migrations/0001_init.sql) → Run. Then do the
+   same with [`migrations/0002_write_api.sql`](migrations/0002_write_api.sql)
+   — it adds the dashboard/TUI write API and the analytics RPCs. Both are
+   safe to re-run.
 3. Project Settings → Database → Connection string → the **Session pooler**
    URI. Replace `[YOUR-PASSWORD]` with the password from step 1. That's
    `DATABASE_URL`.
@@ -191,25 +193,72 @@ or re-enable it in the Actions tab.
 
 1. Edit `web/config.js` with your Supabase URL, anon key, and Render URL.
    All three are safe to commit.
-2. Repo → Settings → **Pages** → Source: **GitHub Actions**.
-3. Push. `.github/workflows/pages.yml` publishes `web/` and prints the URL.
-4. Open it, enter your email, click the emailed link.
-5. In Telegram, send `/link`. Paste the code into the dashboard.
+2. Set `DASHBOARD_ORIGIN` on the Render service (step 5's env vars) to this
+   page's origin once you know it, e.g. `https://your-username.github.io` —
+   no path, no trailing slash. Redeploy the bot after setting it.
+3. Repo → Settings → **Pages** → Source: **GitHub Actions**.
+4. Push. `.github/workflows/pages.yml` publishes `web/` and prints the URL.
+5. Open it, enter your email, click the emailed link.
+6. In Telegram, send `/link`. Paste the code into the dashboard.
 
 That's a one-time pairing. From then on the dashboard shows your notes and
-files, with search, tag filtering, and downloads.
+files, with search, tag filtering, downloads — and, from here on, adding
+notes, uploading files, editing, and deleting.
 
 **On safety, since the page is publicly reachable:** the only credential it
 carries is the anon key, which identifies the project rather than you. The
 migration revokes every table permission from the logged-out `anon` role, and
 RLS scopes every row to `auth.uid()`. A stranger loading the page gets an
-empty list. Downloads work by asking Postgres for a 5-minute token (which it
-only issues for rows you own) and handing that to the bot — R2 credentials
-never reach the browser.
+empty list. Every action against the bot — downloading, adding a note,
+uploading a file, editing, deleting — works by asking Postgres for a
+short-lived, single-use token (which it only issues for rows you own, after
+re-checking `auth.uid()` itself) and handing that to the bot. Storage
+credentials never reach the browser, and the bot never verifies a Supabase
+JWT — the token *is* the authorization, because Postgres already did the real
+check before minting it. `DASHBOARD_ORIGIN` is a second, narrower gate: the
+bot's `/api/*` write routes only answer CORS preflights from that one origin.
 
-The dashboard is deliberately **read-only**. Deleting an item also has to
-delete the file behind it, and only the bot holds storage credentials, so
-deletion goes through `/delete` in Telegram.
+Deleting an item removes the stored file too — the same order (blob, then
+row) `/delete` in Telegram already used, now shared code.
+
+---
+
+## 7a. The TUI client (optional)
+
+A terminal app for the same account, for when you're at a laptop rather than
+a phone: browse, search, add notes, upload files, edit, delete, and view
+stats, from a `ratatui` interface.
+
+1. It needs the same three values as `web/config.js`, as environment
+   variables:
+   ```bash
+   export TELENOTES_SUPABASE_URL=https://your-project-ref.supabase.co
+   export TELENOTES_SUPABASE_ANON_KEY=your-anon-public-key
+   export TELENOTES_BOT_URL=https://your-service.onrender.com
+   ```
+   Put these in your shell profile so you don't retype them.
+2. **One extra Supabase setting the dashboard doesn't need:** Authentication
+   → Email Templates → **Magic Link**, add `{{ .Token }}` somewhere in the
+   body. The dashboard signs in via the link in that email; the TUI, having
+   no browser to catch a redirect, signs in by having you type the 6-digit
+   code instead — but Supabase only includes that code in the email if the
+   template asks for it. This doesn't change how the link itself behaves, so
+   the dashboard keeps working exactly as before.
+3. Build and run it:
+   ```bash
+   cargo run --release -p telenotes-tui
+   ```
+   First run: type your email, press Enter, check your inbox, type the code,
+   press Enter. The session is cached in `~/.config/telenotes/session.json`
+   (mode `600`) and refreshed automatically, so this is a one-time step.
+4. Keys, from the main list: `j`/`k` move, `Enter` view, `/` search, `n` add
+   a note, `u` upload a file, `e` edit the selected item, `x` delete it
+   (press again to confirm), `d` download it, `t` stats, `r` refresh, `q`
+   quit.
+
+The TUI talks to Supabase directly for reads (same tables/RPCs, same RLS as
+the dashboard) and mints its own write tokens the same way the dashboard
+does — there's no separate credential or trust path to keep in sync.
 
 ---
 
