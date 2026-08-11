@@ -37,8 +37,10 @@ jobs:
       - name: Refuse to publish a service_role key
         # The anon key is safe to publish; the service_role key bypasses RLS
         # and would expose everything. Cheap guard against a bad paste.
+        # Comment lines are excluded so a warning that merely *mentions* the
+        # words "service_role" (like the one in config.js) doesn't trip this.
         run: |
-          if grep -rqi "service_role" web/; then
+          if grep -rni "service_role" web/ | grep -vE '^[^:]+:[0-9]+:\s*//'; then
             echo "::error::web/ contains a service_role key. Remove it before publishing."
             exit 1
           fi
