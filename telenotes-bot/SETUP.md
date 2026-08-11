@@ -197,9 +197,20 @@ or re-enable it in the Actions tab.
    page's origin once you know it, e.g. `https://your-username.github.io` —
    no path, no trailing slash. Redeploy the bot after setting it.
 3. Repo → Settings → **Pages** → Source: **GitHub Actions**.
-4. Push. `.github/workflows/pages.yml` publishes `web/` and prints the URL.
-5. Open it, enter your email, click the emailed link.
-6. In Telegram, send `/link`. Paste the code into the dashboard.
+4. Push. `.github/workflows/pages.yml` publishes `web/` and prints the URL —
+   for a repo named `telenotes` under user `you`, that's
+   `https://you.github.io/telenotes/`.
+5. In Supabase: **Authentication → URL Configuration**. Set **Site URL** to
+   that exact Pages URL, and add it again (with a trailing `**`, e.g.
+   `https://you.github.io/telenotes/**`) under **Redirect URLs**.
+
+   Skip this and the magic link email will redirect to Supabase's default
+   (`http://localhost:3000`) instead of your real dashboard, which breaks
+   sign-in with an `otp_expired`/`access_denied` error — not because the link
+   actually expired, but because it redirected somewhere that was never
+   listening.
+6. Open the dashboard, enter your email, click the emailed link.
+7. In Telegram, send `/link`. Paste the code into the dashboard.
 
 That's a one-time pairing. From then on the dashboard shows your notes and
 files, with search, tag filtering, downloads — and, from here on, adding
