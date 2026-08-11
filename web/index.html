@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>telenotes</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='13'>&#128221;</text></svg>">
+</head>
+<body>
+  <header class="topbar">
+    <h1>telenotes</h1>
+    <div class="topbar-right">
+      <span id="account" class="muted"></span>
+      <button id="signout" class="ghost" hidden>Sign out</button>
+    </div>
+  </header>
+
+  <!-- Signed out -->
+  <section id="view-auth" class="panel" hidden>
+    <h2>Sign in</h2>
+    <p class="muted">
+      We'll email you a one-time link. No password to remember.
+    </p>
+    <form id="form-signin">
+      <input id="email" type="email" required placeholder="you@example.com" autocomplete="email">
+      <button type="submit">Send magic link</button>
+    </form>
+    <p id="auth-msg" class="msg" hidden></p>
+  </section>
+
+  <!-- Signed in, but no Telegram account attached yet -->
+  <section id="view-link" class="panel" hidden>
+    <h2>Connect Telegram</h2>
+    <p class="muted">
+      Send <code>/link</code> to your bot, then paste the code it replies with.
+      Codes last 10 minutes and work once.
+    </p>
+    <form id="form-link">
+      <input id="linkcode" required placeholder="ABCD2345" autocapitalize="characters" spellcheck="false">
+      <button type="submit">Connect</button>
+    </form>
+    <p id="link-msg" class="msg" hidden></p>
+  </section>
+
+  <!-- Main dashboard -->
+  <main id="view-main" hidden>
+    <div class="controls">
+      <input id="search" type="search" placeholder="Search notes, captions, filenames…">
+      <div class="filters">
+        <button class="chip active" data-kind="">All</button>
+        <button class="chip" data-kind="note">Notes</button>
+        <button class="chip" data-kind="file">Files</button>
+      </div>
+    </div>
+
+    <div class="layout">
+      <aside id="tags" class="tags"></aside>
+      <section id="results" class="results"></section>
+    </div>
+  </main>
+
+  <p id="boot-error" class="panel error" hidden></p>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

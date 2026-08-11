@@ -1,0 +1,24 @@
+# telenotes
+
+Capture notes and files from your phone into storage you own, via Telegram.
+
+- **[telenotes-bot/](telenotes-bot/)** — the bot (Rust, webhook mode). Start
+  with its [README](telenotes-bot/README.md) for what it does, or go straight
+  to **[SETUP.md](telenotes-bot/SETUP.md)** to stand it up.
+- **[web/](web/)** — the read-only dashboard, published to GitHub Pages.
+- **[.github/workflows/](.github/workflows/)** — CI for the bot, the Supabase
+  keepalive ping, and the Pages deploy.
+
+Keep this repo **private**. The Pages *site* is public regardless — that's
+deliberate, and the reason the dashboard ships nothing but the Supabase anon
+key and leans on Row Level Security. See SETUP.md, step 7.
+
+The captured content does not live here. Notes go to a separate private
+"vault" repo as markdown, and files go to Cloudflare R2. Setting that up is
+steps 2 and 4.
+
+---
+
+Extracted from [`Jayinaksha/reflect`](https://github.com/Jayinaksha/reflect)
+(commit `c4cfe14`), where it had been sharing a repo with unrelated UAV/HRLLC
+research.

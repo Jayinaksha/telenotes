@@ -1,0 +1,9 @@
+.vscode/
+.DS_Store
+*.swp
+
+# Belt-and-braces: telenotes-bot/.gitignore already covers these, but a
+# stray .env anywhere in the tree must never be committed.
+.env
+*.env
+!.env.example

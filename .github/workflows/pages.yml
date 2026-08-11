@@ -1,0 +1,51 @@
+name: pages
+
+# Publishes web/ to GitHub Pages. Building Pages from a private repo needs
+# Pro/Team/Enterprise, which GitHub Education includes.
+#
+# The published SITE is public regardless of repo visibility -- private Pages
+# is Enterprise-only. That is exactly why the dashboard ships only the
+# Supabase anon key and relies on Row Level Security.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "web/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never let two deploys race; drop superseded ones.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Refuse to publish a service_role key
+        # The anon key is safe to publish; the service_role key bypasses RLS
+        # and would expose everything. Cheap guard against a bad paste.
+        run: |
+          if grep -rqi "service_role" web/; then
+            echo "::error::web/ contains a service_role key. Remove it before publishing."
+            exit 1
+          fi
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web
+      - id: deployment
+        uses: actions/deploy-pages@v4
