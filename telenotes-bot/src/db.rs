@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{bail, Context, Result};
 use chrono::{DateTime, Duration, Utc};
 use deadpool_postgres::{Config, Pool, Runtime};
 use rand::Rng;
@@ -14,12 +14,27 @@ const ITEM_COLUMNS: &str = "id, user_id, kind, content_text, file_id, file_uniqu
                             backend, storage_path, file_name, mime_type, file_size, \
                             tags, created_at";
 
+/// Supabase's connection pooler presents a certificate chain rooted at
+/// Supabase's own CA, not one that chains to a public root -- neither the
+/// OS trust store (native-tls) nor Mozilla's bundled roots (webpki-roots)
+/// will ever trust it. Pin it explicitly so the connection is still fully
+/// verified rather than falling back to skipping verification.
+const SUPABASE_ROOT_CA_PEM: &[u8] = include_bytes!("../certs/supabase-root-2021-ca.pem");
+
 pub fn create_pool(database_url: &str) -> Result<Pool> {
     let mut cfg = Config::new();
     cfg.url = Some(database_url.to_string());
 
     let mut root_store = rustls::RootCertStore::empty();
     root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+    let supabase_ca = rustls_pemfile::certs(&mut &SUPABASE_ROOT_CA_PEM[..])
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .context("bundled Supabase root CA is not valid PEM")?;
+    let (added, _) = root_store.add_parsable_certificates(supabase_ca);
+    if added == 0 {
+        bail!("bundled Supabase root CA did not parse as a certificate");
+    }
+
     let tls_config = rustls::ClientConfig::builder()
         .with_root_certificates(root_store)
         .with_no_client_auth();
