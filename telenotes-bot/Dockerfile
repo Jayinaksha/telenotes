@@ -33,6 +33,7 @@ RUN mkdir -p telenotes-core/src telenotes-bot/src telenotes-tui/src \
 
 COPY telenotes-core/src telenotes-core/src
 COPY telenotes-bot/src telenotes-bot/src
+COPY telenotes-bot/certs telenotes-bot/certs
 # Cargo skips rebuilding if mtimes look unchanged after the stub swap.
 RUN touch telenotes-core/src/lib.rs telenotes-bot/src/main.rs \
     && cargo build --release -p telenotes-bot
