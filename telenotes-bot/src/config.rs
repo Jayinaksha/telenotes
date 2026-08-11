@@ -2,7 +2,7 @@
 //! startup with a readable message instead of panicking somewhere deep in a
 //! request handler.
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 
 pub struct Config {
     pub bot_token: String,
@@ -41,15 +41,45 @@ pub struct NotionConfig {
     pub database_id: String,
 }
 
+// Trimmed: a copy-pasted value picking up a trailing newline or space is an
+// easy, invisible mistake (e.g. in a dashboard's env var text box), and
+// something like a connection string silently growing a `\n` produces a
+// deeply confusing downstream error rather than an obvious one here.
+
 fn req(key: &str) -> Result<String> {
-    std::env::var(key).map_err(|_| anyhow!("environment variable {key} must be set"))
+    let value =
+        std::env::var(key).map_err(|_| anyhow!("environment variable {key} must be set"))?;
+    Ok(value.trim().to_string())
 }
 
 fn opt(key: &str) -> Option<String> {
     match std::env::var(key) {
-        Ok(v) if !v.trim().is_empty() => Some(v),
+        Ok(v) if !v.trim().is_empty() => Some(v.trim().to_string()),
         _ => None,
     }
+}
+
+/// Telegram's `setWebhook` rejects anything outside this set with an opaque
+/// API error rather than a helpful message -- catch it here instead, since
+/// Render's auto-generated env var values aren't guaranteed to satisfy it
+/// (standard base64 output, for instance, can include `+`, `/`, `=`).
+fn validate_webhook_secret(secret: &str) -> Result<()> {
+    let len = secret.chars().count();
+    if len == 0 || len > 256 {
+        bail!("WEBHOOK_SECRET must be 1-256 characters, got {len}");
+    }
+    if !secret
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
+        bail!(
+            "WEBHOOK_SECRET contains characters Telegram's setWebhook doesn't allow \
+             (only A-Z, a-z, 0-9, '_', '-'). If this came from a host's auto-generated \
+             value, it may include '+', '/', or '=' from base64 -- replace it with, \
+             e.g., the output of `openssl rand -hex 32` instead."
+        );
+    }
+    Ok(())
 }
 
 impl Config {
@@ -105,10 +135,13 @@ impl Config {
             }
         };
 
+        let webhook_secret = req("WEBHOOK_SECRET")?;
+        validate_webhook_secret(&webhook_secret)?;
+
         Ok(Config {
             bot_token: req("BOT_TOKEN")?,
             webhook_url: req("WEBHOOK_URL")?,
-            webhook_secret: req("WEBHOOK_SECRET")?,
+            webhook_secret,
             port: opt("PORT")
                 .unwrap_or_else(|| "8080".to_string())
                 .parse()
