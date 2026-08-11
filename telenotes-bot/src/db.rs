@@ -18,8 +18,12 @@ pub fn create_pool(database_url: &str) -> Result<Pool> {
     let mut cfg = Config::new();
     cfg.url = Some(database_url.to_string());
 
-    let tls_connector = native_tls::TlsConnector::builder().build()?;
-    let tls = postgres_native_tls::MakeTlsConnector::new(tls_connector);
+    let mut root_store = rustls::RootCertStore::empty();
+    root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+    let tls_config = rustls::ClientConfig::builder()
+        .with_root_certificates(root_store)
+        .with_no_client_auth();
+    let tls = tokio_postgres_rustls::MakeRustlsConnect::new(tls_config);
 
     Ok(cfg.create_pool(Some(Runtime::Tokio1), tls)?)
 }

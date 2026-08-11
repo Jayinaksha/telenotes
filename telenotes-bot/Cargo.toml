@@ -23,8 +23,15 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 regex = "1"
 base64 = "0.22"
-native-tls = "0.2"
-postgres-native-tls = "0.5"
+# Postgres TLS uses rustls with a bundled root store (webpki-roots), not the
+# OS's CA trust store -- Supabase's connection pooler presents a cert chain
+# that native-tls/OpenSSL rejected as untrusted inside a minimal container,
+# even with ca-certificates installed. Bundling roots sidesteps that
+# category of problem entirely. reqwest keeps its own native-tls backend
+# below, unrelated to this -- only the direct Postgres connection changes.
+tokio-postgres-rustls = "0.13"
+rustls = { version = "0.23", default-features = false, features = ["ring", "logging", "std", "tls12"] }
+webpki-roots = "0.26"
 rusty-s3 = "0.10"
 rand = "0.8"
 url = "2.5.8"
