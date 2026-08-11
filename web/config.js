@@ -9,4 +9,4 @@ export const SUPABASE_ANON_KEY = "sb_publishable_TISj1MS0l7EihRw_gjHvpA_rpMB7z7g
 
 // Your deployed bot service, with no trailing slash. Used to redeem
 // download tokens and to reach the write API (add/edit/upload/delete).
-export const BOT_URL = "https://telenotes-bot.onrender.com";
+export const BOT_URL = "https://telenotes-bot-ksr1.onrender.com";
