@@ -175,6 +175,44 @@ function errorNode(message) {
   return p;
 }
 
+/// Compact list of semantically-related items, shown inline under a card.
+/// `excludeId` guards against an item ever listing itself, though the RPC
+/// already excludes it server-side.
+function renderRelatedList(box, hits, excludeId) {
+  box.replaceChildren();
+  const filtered = (hits ?? []).filter((h) => h.id !== excludeId);
+  if (filtered.length === 0) {
+    box.append(errorNode("Nothing related found yet."));
+    return;
+  }
+  for (const hit of filtered) {
+    const row = document.createElement("div");
+    row.className = "related-row";
+
+    const kind = document.createElement("span");
+    kind.className = "kind";
+    kind.textContent = hit.kind;
+    row.append(kind);
+
+    const label = document.createElement("span");
+    label.className = "related-label";
+    label.textContent =
+      hit.kind === "note"
+        ? (hit.content_text ?? "").split("\n")[0].slice(0, 80) || "(empty note)"
+        : hit.file_name ?? `${hit.kind} file`;
+    row.append(label);
+
+    row.append(" ");
+
+    const stamp = document.createElement("span");
+    stamp.className = "item-stamp";
+    stamp.textContent = hit.id.slice(0, 8);
+    row.append(stamp);
+
+    box.append(row);
+  }
+}
+
 function itemHead(item) {
   const head = document.createElement("div");
   head.className = "item-head";
@@ -206,7 +244,7 @@ function itemHead(item) {
   return head;
 }
 
-function renderItem(item, { onDownload, onEdit, onDelete, onRenderNote, onResolveUrl }) {
+function renderItem(item, { onDownload, onEdit, onDelete, onRenderNote, onResolveUrl, onRelated }) {
   const el = document.createElement("article");
   el.className = "item";
   el.append(itemHead(item));
@@ -218,6 +256,11 @@ function renderItem(item, { onDownload, onEdit, onDelete, onRenderNote, onResolv
     body.textContent = item.content_text;
     el.append(body);
   }
+
+  const relatedBox = document.createElement("div");
+  relatedBox.className = "item-related";
+  relatedBox.hidden = true;
+  el.append(relatedBox);
 
   const pKind = previewKind(item);
   let previewBox = null;
@@ -347,6 +390,30 @@ function renderItem(item, { onDownload, onEdit, onDelete, onRenderNote, onResolv
     btn.textContent = "Download";
     btn.onclick = () => onDownload(item, btn);
     actions.append(btn);
+  }
+
+  if (onRelated) {
+    const relatedBtn = document.createElement("button");
+    relatedBtn.className = "ghost small";
+    relatedBtn.textContent = "Related";
+    relatedBtn.onclick = async () => {
+      if (!relatedBox.dataset.loaded) {
+        relatedBtn.disabled = true;
+        relatedBtn.textContent = "Loading…";
+        try {
+          const hits = await onRelated(item);
+          renderRelatedList(relatedBox, hits, item.id);
+          relatedBox.dataset.loaded = "1";
+        } catch (e) {
+          relatedBox.replaceChildren(errorNode(`Couldn't load related items: ${e.message}`));
+        } finally {
+          relatedBtn.disabled = false;
+          relatedBtn.textContent = "Related";
+        }
+      }
+      relatedBox.hidden = !relatedBox.hidden;
+    };
+    actions.append(relatedBtn);
   }
 
   const editBtn = document.createElement("button");

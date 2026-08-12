@@ -92,7 +92,9 @@ frontmatter. They're readable directly on GitHub and diffable over time.
    [`migrations/0001_init.sql`](migrations/0001_init.sql) → Run. Then do the
    same with [`migrations/0002_write_api.sql`](migrations/0002_write_api.sql)
    — it adds the dashboard/TUI write API and the analytics RPCs. Both are
-   safe to re-run.
+   safe to re-run. `0003_fix_gen_random_bytes_search_path.sql` is a forward
+   fix for a bug in 0001/0002 — run it too. `0004`/`0005` are for semantic
+   search — optional, see [§9](#9-semantic-search-optional).
 3. Project Settings → Database → Connection string → the **Session pooler**
    URI. Replace `[YOUR-PASSWORD]` with the password from step 1. That's
    `DATABASE_URL`.
@@ -307,6 +309,41 @@ Every capture now also creates a Notion page. It's one-way by design: Postgres
 stays the source of truth, so there's no sync conflict to resolve. Mirroring is
 best-effort — if Notion is down your note is still saved, with a warning in the
 logs.
+
+---
+
+## 9. Semantic search (optional)
+
+Every note and PDF gets chunked and embedded, so Browse can search by meaning
+("papers about attention mechanisms") instead of exact keywords, and each
+item card gets a "Related" button showing other items about the same thing.
+Skip this and everything else works exactly as before — it's additive.
+
+1. SQL Editor → run
+   [`migrations/0004_semantic_search.sql`](migrations/0004_semantic_search.sql),
+   then [`migrations/0005_search_token.sql`](migrations/0005_search_token.sql).
+   Both are safe to re-run.
+2. [voyageai.com](https://www.voyageai.com) → sign up → API keys. The free
+   tier is 200M tokens, which is a lot of notes and papers. Copy the key →
+   `VOYAGE_API_KEY`.
+3. Set it on Render and redeploy.
+4. Backfill existing items once, so everything you captured before today is
+   searchable too — open a shell on the Render service (or run locally with
+   the same `DATABASE_URL`/`VOYAGE_API_KEY`) and run:
+
+   ```bash
+   telenotes-bot --backfill
+   ```
+
+   This walks every item that has no chunks yet, extracts text (the note body,
+   or the text layer of a PDF), embeds it, and exits. Safe to re-run — it
+   only ever processes items still missing chunks. Scanned PDFs with no text
+   layer are skipped; everything else still saves normally, just without
+   embeddings.
+
+From here on, new notes/files/edits are embedded automatically in the
+background — best-effort, same philosophy as the Notion mirror: if Voyage is
+briefly down, your item still saves, just without embeddings for the moment.
 
 ---
 

@@ -61,6 +61,29 @@ export async function deleteItem(itemId) {
   return ok(resp);
 }
 
+/// Items whose chunks are semantically closest to this one's, via the
+/// `related_items` RPC. Unlike search, this needs no embedding step on our
+/// side -- it's comparing vectors Postgres already has -- so it's a plain
+/// RLS-scoped RPC call, no bot round trip.
+export async function relatedItems(itemId) {
+  const { data, error } = await supabase.rpc("related_items", { item_id: itemId });
+  if (error) throw error;
+  return data ?? [];
+}
+
+/// Semantic search needs the query text embedded, which needs the Voyage API
+/// key the bot holds -- so, like a write, this mints a single-use token
+/// first and hands the actual search to the bot.
+export async function semanticSearch(query) {
+  const token = await writeToken("semantic_search");
+  const resp = await fetch(`${BOT_URL}/api/semantic-search`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token, query }),
+  });
+  return ok(resp);
+}
+
 /// Swaps an item id for a short-lived download token and returns the URL it
 /// resolves to. The browser never sees storage credentials -- only this
 /// signed, single-purpose URL, minted fresh per call.

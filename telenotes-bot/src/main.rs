@@ -1,8 +1,10 @@
 mod api;
 mod config;
 mod db;
+mod embeddings;
 mod handlers;
 mod notion;
+mod pdf;
 mod storage;
 
 use std::sync::Arc;
@@ -19,6 +21,7 @@ use teloxide::types::{BotCommand, Update};
 use tower_http::cors::CorsLayer;
 
 use config::Config;
+use embeddings::VoyageClient;
 use notion::NotionClient;
 use storage::{GitHubStore, R2Store, Vault};
 
@@ -38,6 +41,7 @@ pub struct AppState {
     pub db: Pool,
     pub vault: Vault,
     pub notion: Option<NotionClient>,
+    pub voyage: Option<VoyageClient>,
     pub http: reqwest::Client,
 }
 
@@ -104,6 +108,31 @@ async fn main() -> anyhow::Result<()> {
         tracing::info!("Notion mirroring enabled");
     }
 
+    let voyage = config
+        .voyage_api_key
+        .as_ref()
+        .map(|key| VoyageClient::new(http.clone(), key.clone()));
+    if voyage.is_some() {
+        tracing::info!("semantic search enabled");
+    }
+
+    // One-off maintenance pass, not a server mode: `telenotes-bot --backfill`
+    // embeds every item that predates semantic search being turned on, then
+    // exits. Meant to be run once from a shell against the deployed
+    // database (e.g. Render's shell), not as the service's normal command.
+    if std::env::args().any(|a| a == "--backfill") {
+        let state = AppState {
+            bot,
+            config: Arc::new(config),
+            db: db_pool,
+            vault,
+            notion,
+            voyage,
+            http,
+        };
+        return backfill_embeddings(&state).await;
+    }
+
     let port = config.port;
     let webhook_url = format!("{}/webhook", config.webhook_url.trim_end_matches('/'));
 
@@ -139,6 +168,7 @@ async fn main() -> anyhow::Result<()> {
         db: db_pool,
         vault,
         notion,
+        voyage,
         http,
     };
 
@@ -147,6 +177,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/items/{item_id}/edit", post(api::edit_item_handler))
         .route("/api/items/{item_id}", delete(api::delete_item_handler))
         .route("/api/files", post(api::upload_file_handler))
+        .route("/api/semantic-search", post(api::semantic_search_handler))
         .layer(DefaultBodyLimit::max(MAX_UPLOAD_BYTES))
         .layer(cors);
 
@@ -269,4 +300,63 @@ async fn download_handler(State(state): State<AppState>, Path(token): Path<Strin
 async fn shutdown_signal() {
     let _ = tokio::signal::ctrl_c().await;
     tracing::info!("shutting down");
+}
+
+/// `telenotes-bot --backfill`: embeds every item that predates semantic
+/// search (or was added before `VOYAGE_API_KEY` was set), then exits. Not
+/// part of the request-serving path -- run once from a shell.
+async fn backfill_embeddings(state: &AppState) -> anyhow::Result<()> {
+    if state.voyage.is_none() {
+        anyhow::bail!("VOYAGE_API_KEY is not set -- nothing to backfill");
+    }
+
+    let candidates = db::items_missing_chunks(&state.db).await?;
+    tracing::info!("backfilling embeddings for {} items", candidates.len());
+
+    let mut embedded = 0usize;
+    let mut skipped = 0usize;
+    for c in candidates {
+        match backfill_text(state, &c).await {
+            Some(text) if !text.trim().is_empty() => {
+                embeddings::embed_item(state, c.id, c.user_id, &text).await;
+                embedded += 1;
+                if embedded % 10 == 0 {
+                    tracing::info!("backfilled {embedded} items so far");
+                }
+            }
+            _ => skipped += 1,
+        }
+    }
+    tracing::info!(
+        "backfill complete: {embedded} embedded, {skipped} skipped (no extractable text)"
+    );
+    Ok(())
+}
+
+/// Notes embed their own text. PDFs get their text layer extracted. Other
+/// file kinds (images/audio/video) fall back to their caption, if any --
+/// OCR and transcription aren't implemented yet, so a bare photo with no
+/// caption has nothing to embed.
+async fn backfill_text(state: &AppState, c: &db::BackfillCandidate) -> Option<String> {
+    if c.kind == "note" {
+        return c.content_text.clone();
+    }
+    if c.mime_type.as_deref() == Some("application/pdf") {
+        let path = c.storage_path.as_deref()?;
+        let backend = storage::Backend::parse(c.backend.as_deref());
+        match state.vault.get(backend, path).await {
+            Ok(bytes) => match pdf::extract_text(&bytes) {
+                Ok(text) => return Some(text),
+                Err(e) => {
+                    tracing::warn!("PDF text extraction failed for item {}: {e:?}", c.id);
+                    return c.content_text.clone();
+                }
+            },
+            Err(e) => {
+                tracing::warn!("could not fetch item {} for backfill: {e:?}", c.id);
+                return c.content_text.clone();
+            }
+        }
+    }
+    c.content_text.clone()
 }

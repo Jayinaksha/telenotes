@@ -350,6 +350,12 @@ button.danger-text:hover { color: var(--danger); border-color: var(--danger); }
   border-color: var(--accent);
 }
 
+#toggle-semantic.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
 .tag-filter {
   display: flex;
   align-items: center;
@@ -483,6 +489,34 @@ button.danger-text:hover { color: var(--danger); border-color: var(--danger); }
 
 .rendered-note img { max-width: 100%; border-radius: 6px; }
 .rendered-note a { color: var(--accent); }
+
+/* ---------- related items ---------- */
+
+.item-related {
+  margin: 0.6rem 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.related-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.6rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 0.88rem;
+}
+
+.related-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 /* ---------- inline file previews ---------- */
 

@@ -17,6 +17,10 @@ pub struct Config {
     pub github: GitHubConfig,
     pub r2: Option<R2Config>,
     pub notion: Option<NotionConfig>,
+    /// Semantic search: wired but dormant like Notion, until this is set.
+    /// No paired fields to validate -- it's a single key, unlike Notion's
+    /// token+database pair.
+    pub voyage_api_key: Option<String>,
     /// The dashboard's origin (e.g. `https://you.github.io`), the only
     /// origin the `/api/*` write endpoints answer CORS preflights for.
     pub dashboard_origin: String,
@@ -180,6 +184,7 @@ impl Config {
             },
             r2,
             notion,
+            voyage_api_key: opt("VOYAGE_API_KEY"),
             dashboard_origin,
         })
     }

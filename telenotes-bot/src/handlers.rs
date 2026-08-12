@@ -173,6 +173,11 @@ pub(crate) async fn create_note(state: &AppState, user_id: Uuid, text: &str) -> 
         }
     }
 
+    // Chunking + embedding happen off to the side: they're pure value-add
+    // for semantic search, never something a note's save should wait on or
+    // fail because of.
+    spawn_embedding(state, id, user_id, text.to_string());
+
     Ok(Item {
         id,
         user_id,
@@ -235,6 +240,23 @@ pub(crate) async fn create_file(
     let size = bytes.len() as i64;
     let content_type = mime_type.unwrap_or("application/octet-stream");
 
+    // Extracted before the upload below consumes `bytes` -- best-effort:
+    // a PDF with no text layer (scanned images) or one pdf-extract can't
+    // parse just means semantic search won't cover it, the file itself is
+    // unaffected either way.
+    let pdf_text = if content_type == "application/pdf" {
+        match crate::pdf::extract_text(&bytes) {
+            Ok(t) if !t.trim().is_empty() => Some(t),
+            Ok(_) => None,
+            Err(e) => {
+                tracing::warn!("PDF text extraction failed for {file_name}: {e:?}");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     // Bytes first: an orphaned blob is cheap to clean up, but a row pointing
     // at a file that was never written is a broken item forever.
     let backend = state
@@ -282,6 +304,13 @@ pub(crate) async fn create_file(
         if let Err(e) = db::set_notion_page_id(&state.db, id, &page_id).await {
             tracing::warn!("file {short} mirrored to Notion but page id not saved: {e:?}");
         }
+    }
+
+    // Embed the PDF's own text if we extracted any; otherwise fall back to
+    // the caption, so a photo or voice memo with a written note attached is
+    // still findable by meaning even without OCR/transcription.
+    if let Some(text) = pdf_text.or_else(|| caption.map(str::to_string)) {
+        spawn_embedding(state, id, user_id, text);
     }
 
     Ok(Item {
@@ -376,6 +405,15 @@ async fn save_incoming_file(
         .await
         .ok();
     Ok(())
+}
+
+/// Chunks and embeds `text` in the background, off the request/message path.
+/// A no-op if `VOYAGE_API_KEY` isn't set -- `embed_item` checks that itself.
+fn spawn_embedding(state: &AppState, item_id: Uuid, user_id: Uuid, text: String) {
+    let state = state.clone();
+    tokio::spawn(async move {
+        crate::embeddings::embed_item(&state, item_id, user_id, &text).await;
+    });
 }
 
 /// Returns the new page's id on success, so callers can store it on the
@@ -480,6 +518,17 @@ pub(crate) async fn edit_item(
                 "could not look up Notion page id for {}: {e:?}",
                 item.short_id()
             ),
+        }
+    }
+
+    // Re-embed on a text change so semantic search reflects the edit rather
+    // than the item's original wording. Skipped for files whose caption
+    // didn't change -- a filename/mime-type-only edit has no new text, and
+    // re-extracting a PDF's text layer on every metadata tweak would be
+    // wasted work for no different embedding.
+    if content_text.is_some() {
+        if let Some(text) = item.content_text.clone() {
+            spawn_embedding(state, item.id, user_id, text);
         }
     }
 

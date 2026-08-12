@@ -35,6 +35,7 @@ const state = {
   query: "",
   items: [],
   editingId: null,
+  semantic: false,
 };
 
 // ---------------------------------------------------------------------------
@@ -166,7 +167,10 @@ async function loadStatsPane() {
 async function loadItems() {
   let rows;
   try {
-    rows = await fetchItems({ query: state.query, kind: state.kind, tag: state.tag });
+    rows =
+      state.semantic && state.query
+        ? await api.semanticSearch(state.query)
+        : await fetchItems({ query: state.query, kind: state.kind, tag: state.tag });
   } catch (e) {
     return show($("boot-error"), e.message);
   }
@@ -206,6 +210,7 @@ function render() {
     onDelete,
     onRenderNote: (item) => renderNoteHtml(item.content_text),
     onResolveUrl: (item) => api.resolveUrl(item),
+    onRelated: (item) => api.relatedItems(item.id),
   });
 }
 
@@ -329,5 +334,16 @@ for (const chip of document.querySelectorAll(".chip")) {
     loadItems();
   });
 }
+
+$("toggle-semantic").addEventListener("click", () => {
+  state.semantic = !state.semantic;
+  const btn = $("toggle-semantic");
+  btn.classList.toggle("active", state.semantic);
+  btn.setAttribute("aria-pressed", String(state.semantic));
+  $("search").placeholder = state.semantic
+    ? "Search by meaning — e.g. \"papers about attention mechanisms\"…"
+    : "Search notes, captions, filenames…";
+  if (state.query) loadItems();
+});
 
 route();

@@ -456,3 +456,137 @@ pub async fn item_for_download_token(pool: &Pool, token: &str) -> Result<Option<
     let row = client.query_opt(&sql, &[&token]).await?;
     Ok(row.as_ref().map(row_to_item))
 }
+
+// ---------------------------------------------------------------------------
+// Semantic search
+// ---------------------------------------------------------------------------
+
+/// Replaces every chunk belonging to `item_id` with `chunks`, atomically --
+/// an edit's re-embed shouldn't leave a window where the item has half its
+/// old chunks and half its new ones.
+pub async fn replace_chunks(
+    pool: &Pool,
+    item_id: Uuid,
+    user_id: Uuid,
+    chunks: &[(String, pgvector::Vector)],
+) -> Result<()> {
+    let mut client = pool.get().await?;
+    let tx = client.transaction().await?;
+    tx.execute("DELETE FROM chunks WHERE item_id = $1", &[&item_id])
+        .await?;
+    for (i, (content, embedding)) in chunks.iter().enumerate() {
+        let idx = i as i32;
+        tx.execute(
+            "INSERT INTO chunks (item_id, user_id, chunk_index, content, embedding)
+             VALUES ($1, $2, $3, $4, $5)",
+            &[&item_id, &user_id, &idx, content, embedding],
+        )
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(())
+}
+
+/// One row of what the backfill pass needs: enough to re-derive the text to
+/// embed without pulling every column, plus whether it already has chunks so
+/// a re-run doesn't redo work that's already done.
+pub struct BackfillCandidate {
+    pub id: Uuid,
+    pub user_id: Uuid,
+    pub kind: String,
+    pub content_text: Option<String>,
+    pub backend: Option<String>,
+    pub storage_path: Option<String>,
+    pub mime_type: Option<String>,
+}
+
+/// One semantic search hit: an item plus how close its nearest chunk was
+/// to the query (0 = identical meaning, 2 = opposite -- pgvector's `<=>`
+/// is cosine distance).
+#[derive(serde::Serialize)]
+pub struct SearchHit {
+    pub id: Uuid,
+    pub kind: String,
+    pub content_text: Option<String>,
+    pub file_name: Option<String>,
+    pub mime_type: Option<String>,
+    pub storage_path: Option<String>,
+    pub tags: Vec<String>,
+    pub created_at: DateTime<Utc>,
+    pub distance: f64,
+}
+
+/// The bot-side counterpart to the `related_items` RPC the browser calls
+/// directly: this one takes an already-embedded query vector (the browser
+/// can't compute that itself -- embedding needs the Voyage API key) and
+/// scopes by `user_id` explicitly rather than `auth.uid()`, because the bot
+/// connects as the `postgres` role with no Supabase JWT in play. `user_id`
+/// here always comes from a claimed `semantic_search` token, which already
+/// proved ownership via RLS at mint time -- see `claim_write_token`.
+pub async fn semantic_search(
+    pool: &Pool,
+    user_id: Uuid,
+    query_embedding: &pgvector::Vector,
+    limit: i32,
+) -> Result<Vec<SearchHit>> {
+    let client = pool.get().await?;
+    let rows = client
+        .query(
+            "SELECT i.id, i.kind, i.content_text, i.file_name, i.mime_type, i.storage_path,
+                    i.tags, i.created_at, MIN(c.embedding <=> $2) AS distance
+             FROM chunks c
+             JOIN items i ON i.id = c.item_id
+             WHERE c.user_id = $1
+             GROUP BY i.id, i.kind, i.content_text, i.file_name, i.mime_type, i.storage_path,
+                      i.tags, i.created_at
+             ORDER BY distance ASC
+             LIMIT $3",
+            &[&user_id, query_embedding, &(limit.clamp(1, 100) as i64)],
+        )
+        .await?;
+    Ok(rows
+        .iter()
+        .map(|r| SearchHit {
+            id: r.get("id"),
+            kind: r.get("kind"),
+            content_text: r.get("content_text"),
+            file_name: r.get("file_name"),
+            mime_type: r.get("mime_type"),
+            storage_path: r.get("storage_path"),
+            tags: r.get("tags"),
+            created_at: r.get("created_at"),
+            distance: r.get("distance"),
+        })
+        .collect())
+}
+
+/// Every item that has no chunks yet, across all users -- the backfill
+/// command's worklist. Ordered oldest-first so a partial run (rate limits,
+/// a restart) makes steady progress rather than looping the same recent
+/// items.
+pub async fn items_missing_chunks(pool: &Pool) -> Result<Vec<BackfillCandidate>> {
+    let client = pool.get().await?;
+    let rows = client
+        .query(
+            "SELECT i.id, i.user_id, i.kind, i.content_text, i.backend, i.storage_path, i.mime_type
+             FROM items i
+             LEFT JOIN chunks c ON c.item_id = i.id
+             WHERE c.id IS NULL
+             GROUP BY i.id
+             ORDER BY i.created_at ASC",
+            &[],
+        )
+        .await?;
+    Ok(rows
+        .iter()
+        .map(|r| BackfillCandidate {
+            id: r.get("id"),
+            user_id: r.get("user_id"),
+            kind: r.get("kind"),
+            content_text: r.get("content_text"),
+            backend: r.get("backend"),
+            storage_path: r.get("storage_path"),
+            mime_type: r.get("mime_type"),
+        })
+        .collect())
+}

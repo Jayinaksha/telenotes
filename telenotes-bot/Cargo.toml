@@ -36,3 +36,7 @@ webpki-roots = "0.26"
 rusty-s3 = "0.10"
 rand = "0.8"
 url = "2.5.8"
+# Semantic search: pgvector's Rust bindings implement postgres-types'
+# ToSql/FromSql, which tokio-postgres uses directly -- no separate driver.
+pgvector = { version = "0.4", features = ["postgres"] }
+pdf-extract = "0.7"

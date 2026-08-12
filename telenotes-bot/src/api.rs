@@ -81,6 +81,41 @@ pub async fn create_note_handler(
 }
 
 #[derive(Deserialize)]
+pub struct SemanticSearchBody {
+    token: String,
+    query: String,
+    #[serde(default)]
+    limit: Option<i32>,
+}
+
+/// Embeds `query` via Voyage and returns the caller's own items ranked by
+/// how close their nearest chunk is to it. The browser can't do this call
+/// itself -- embedding needs the Voyage API key -- so it mints a
+/// `semantic_search` token the same way it mints a write token, then hands
+/// it here instead of calling Postgres directly.
+pub async fn semantic_search_handler(
+    State(state): State<AppState>,
+    Json(body): Json<SemanticSearchBody>,
+) -> ApiResult<Response> {
+    if body.query.trim().is_empty() {
+        return Err(ApiError::BadRequest("query must not be empty".to_string()));
+    }
+
+    let Some(claimed) = db::claim_write_token(&state.db, &body.token, "semantic_search").await?
+    else {
+        return Err(ApiError::Unauthorized);
+    };
+
+    let embedding = crate::embeddings::embed_query(&state, &body.query)
+        .await
+        .map_err(ApiError::Internal)?;
+
+    let limit = body.limit.unwrap_or(20);
+    let hits = db::semantic_search(&state.db, claimed.user_id, &embedding, limit).await?;
+    Ok(Json(hits).into_response())
+}
+
+#[derive(Deserialize)]
 pub struct EditItemBody {
     token: String,
     content_text: Option<String>,
