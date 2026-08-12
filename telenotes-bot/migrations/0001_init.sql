@@ -211,7 +211,10 @@ create or replace function issue_download_token(item_id uuid)
 returns text
 language plpgsql
 security definer
-set search_path = public
+-- `extensions` is where Supabase actually installs pgcrypto (gen_random_bytes
+-- below) on most projects, not `public` -- a plain `create extension` no-ops
+-- against Supabase's pre-provisioned copy there, so it never lands in public.
+set search_path = public, extensions
 as $$
 declare
   new_token text;

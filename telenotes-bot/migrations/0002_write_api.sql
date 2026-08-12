@@ -53,7 +53,8 @@ create or replace function issue_write_token(purpose text, item_id uuid default 
 returns text
 language plpgsql
 security definer
-set search_path = public
+-- see issue_download_token in 0001_init.sql for why `extensions` is needed here
+set search_path = public, extensions
 as $$
 declare
   new_token text;
