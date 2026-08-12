@@ -82,6 +82,27 @@ fn validate_webhook_secret(secret: &str) -> Result<()> {
     Ok(())
 }
 
+/// The browser's `Origin` header is always scheme+host(+port), never a path
+/// -- a `DASHBOARD_ORIGIN` with a path (e.g. copy-pasted straight from the
+/// Pages URL, `.../your-repo`) makes every CORS preflight check fail. That
+/// shows up in the browser purely as a swallowed "Failed to fetch", with
+/// nothing useful in this server's own logs, so it's worth catching here.
+fn validate_dashboard_origin(origin: &str) -> Result<()> {
+    let Some((scheme, rest)) = origin.split_once("://") else {
+        bail!("DASHBOARD_ORIGIN must include a scheme, e.g. https://your-user.github.io (got {origin:?})");
+    };
+    if let Some(path_start) = rest.find('/') {
+        let bare = &rest[..path_start];
+        bail!(
+            "DASHBOARD_ORIGIN must be a bare origin (scheme + host only, no path) -- \
+             browsers send just \"{scheme}://{bare}\" as the Origin header, so a path here \
+             makes every CORS check fail, which surfaces in the browser only as a \
+             mysterious \"Failed to fetch\". Use \"{scheme}://{bare}\" instead of {origin:?}."
+        );
+    }
+    Ok(())
+}
+
 impl Config {
     pub fn from_env() -> Result<Self> {
         let allowed_chat_ids = match opt("ALLOWED_CHAT_IDS") {
@@ -138,6 +159,9 @@ impl Config {
         let webhook_secret = req("WEBHOOK_SECRET")?;
         validate_webhook_secret(&webhook_secret)?;
 
+        let dashboard_origin = req("DASHBOARD_ORIGIN")?;
+        validate_dashboard_origin(&dashboard_origin)?;
+
         Ok(Config {
             bot_token: req("BOT_TOKEN")?,
             webhook_url: req("WEBHOOK_URL")?,
@@ -156,7 +180,7 @@ impl Config {
             },
             r2,
             notion,
-            dashboard_origin: req("DASHBOARD_ORIGIN")?,
+            dashboard_origin,
         })
     }
 
