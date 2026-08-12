@@ -271,6 +271,15 @@ The TUI talks to Supabase directly for reads (same tables/RPCs, same RLS as
 the dashboard) and mints its own write tokens the same way the dashboard
 does — there's no separate credential or trust path to keep in sync.
 
+**Using it on another device**: the session cache in step 3 is a local file,
+so it doesn't follow you between machines — each device signs in once,
+independently. Repeat steps 1–3 there: install Rust (`rustup.rs`) if it isn't
+already, clone this repo, set the same three env vars (they're safe to
+reuse — the anon key is public by design, see `web/config.js`'s comment),
+then `cargo run --release -p telenotes-tui`. No new tokens or Supabase
+config needed; every device just becomes another authenticated client of
+the same project, same as opening the dashboard in a different browser.
+
 ---
 
 ## 8. Notion (optional)
