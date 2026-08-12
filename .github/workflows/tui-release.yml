@@ -1,0 +1,85 @@
+name: tui-release
+
+# Builds telenotes-tui for Linux, macOS (both architectures), and Windows,
+# and publishes them as downloadable binaries on a GitHub Release. Each
+# device you run the TUI on just needs one of these, plus the three
+# TELENOTES_* env vars from SETUP.md -- no local Rust toolchain required.
+#
+# Push a tag like `tui-v0.1.0` to cut a release; workflow_dispatch runs the
+# same build without publishing, useful for checking it still compiles on
+# every platform before tagging.
+
+on:
+  push:
+    tags:
+      - "tui-v*"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            asset: telenotes-tui-linux-x86_64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            asset: telenotes-tui-macos-arm64
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            asset: telenotes-tui-macos-x86_64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            asset: telenotes-tui-windows-x86_64.exe
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      # reqwest's native-tls feature links the system TLS library; Linux
+      # runners don't ship the dev headers openssl-sys needs to build it.
+      - name: Install OpenSSL dev headers
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
+
+      - run: cargo build --release -p telenotes-tui --target ${{ matrix.target }}
+
+      - name: Stage binary (Unix)
+        if: runner.os != 'Windows'
+        run: cp target/${{ matrix.target }}/release/telenotes-tui ${{ matrix.asset }}
+
+      - name: Stage binary (Windows)
+        if: runner.os == 'Windows'
+        run: copy target\${{ matrix.target }}\release\telenotes-tui.exe ${{ matrix.asset }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: ${{ matrix.asset }}
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/tui-v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - run: gh release create "${{ github.ref_name }}" artifacts/* --title "telenotes-tui ${{ github.ref_name }}" --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}
