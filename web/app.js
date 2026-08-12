@@ -278,11 +278,10 @@ $("form-note").addEventListener("submit", async (e) => {
   }
 });
 
-// Doc-style textarea: grows with content, and the Save button only lights
-// up once there's something worth saving.
+// The Save button only lights up once there's something worth saving. The
+// textarea fills the screen via CSS (flex) and scrolls internally on its
+// own -- no JS resizing needed.
 $("note-text").addEventListener("input", (e) => {
-  e.target.style.height = "auto";
-  e.target.style.height = `${e.target.scrollHeight}px`;
   $("note-save").disabled = e.target.value.trim().length === 0;
   if (!$("note-msg").hidden) $("note-msg").hidden = true;
 });

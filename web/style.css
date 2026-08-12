@@ -320,6 +320,8 @@ button.danger-text:hover { color: var(--danger); border-color: var(--danger); }
   .navtab.active { border-top-color: var(--accent); }
 
   .content { padding: 1.25rem 1rem 5rem; }
+
+  .pane-doc { min-height: calc(100vh - 1.25rem - 5rem); }
 }
 
 /* ---------- controls ---------- */
@@ -602,15 +604,23 @@ audio.preview-media { max-height: none; width: 100%; }
 
 /* ---------- write: doc-style note page ---------- */
 
+/* Fills the viewport exactly (content's own padding subtracted below) so the
+   pane never grows taller than the screen -- the textarea scrolls
+   internally instead, and the actions bar stays a true fixed footer rather
+   than chasing the cursor or leaving dead space under a short note. */
 .pane-doc {
   max-width: 42rem;
-  margin: 2rem auto 0;
+  margin: 0 auto;
+  min-height: calc(100vh - 1.75rem - 3rem);
+  display: flex;
+  flex-direction: column;
 }
 
 .doc-form {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  flex: 1;
+  min-height: 0;
   margin: 0;
 }
 
@@ -620,9 +630,10 @@ audio.preview-media { max-height: none; width: 100%; }
   padding: 0;
   font-size: 1.1rem;
   line-height: 1.7;
-  min-height: 60vh;
+  flex: 1;
+  min-height: 0;
   resize: none;
-  overflow: hidden;
+  overflow-y: auto;
 }
 
 .doc-textarea:focus-visible { outline: none; }
@@ -632,8 +643,9 @@ audio.preview-media { max-height: none; width: 100%; }
   align-items: center;
   justify-content: flex-end;
   gap: 0.75rem;
-  border-top: 1px solid var(--border);
+  flex-shrink: 0;
   padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
 }
 
 .doc-actions .msg { margin: 0; flex: 1 1 auto; }
