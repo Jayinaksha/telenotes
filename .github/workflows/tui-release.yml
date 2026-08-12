@@ -75,6 +75,10 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/tui-v')
     runs-on: ubuntu-latest
     steps:
+      # --generate-notes shells out to git for the commit history, so this
+      # job needs an actual checkout, not just the downloaded artifacts.
+      - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
