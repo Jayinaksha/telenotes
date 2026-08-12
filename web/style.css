@@ -27,6 +27,13 @@
 
 * { box-sizing: border-box; }
 
+/* Elements toggled via the native `hidden` attribute (JS sets `.hidden =
+   true/false`) must actually disappear. Without this, any more-specific
+   rule elsewhere that sets its own `display` (`#shell`, `.upload-inline`,
+   `.tag-filter`, ...) silently wins the cascade over the browser's built-in
+   `[hidden] { display: none }`, and `.hidden = true` stops doing anything. */
+[hidden] { display: none !important; }
+
 html, body { height: 100%; }
 
 body {
