@@ -5,9 +5,21 @@
 
 const $ = (id) => document.getElementById(id);
 
-export function only(viewId) {
-  for (const id of ["view-auth", "view-link", "view-main", "view-stats"]) {
-    $(id).hidden = id !== viewId;
+const PANES = ["write", "browse", "tags", "stats"];
+
+/// Switches between the pre-login screens and the signed-in app shell.
+/// `id` is "view-auth", "view-link", or "shell".
+export function showEntry(id) {
+  for (const viewId of ["view-auth", "view-link"]) $(viewId).hidden = viewId !== id;
+  $("shell").hidden = id !== "shell";
+}
+
+/// Switches which panel is visible inside the app shell, and updates the
+/// sidebar's active tab to match.
+export function showPane(name) {
+  for (const p of PANES) $(`pane-${p}`).hidden = p !== name;
+  for (const tab of document.querySelectorAll(".navtab")) {
+    tab.classList.toggle("active", tab.dataset.view === name);
   }
 }
 
@@ -22,27 +34,47 @@ export function flash(el, text, bad = false) {
   el.hidden = false;
 }
 
-export function renderTags(tagCounts, selectedTag, onSelect) {
-  const box = $("tags");
+/// Full tag picker for the Tags pane -- selecting one jumps to Browse
+/// filtered by it (handled by the caller's onSelect).
+export function renderTagList(tagCounts, onSelect) {
+  const box = $("tag-list");
   box.replaceChildren();
 
-  const all = document.createElement("button");
-  all.textContent = "All tags";
-  all.classList.toggle("active", selectedTag === null);
-  all.onclick = () => onSelect(null);
-  box.append(all);
+  if (tagCounts.length === 0) {
+    const p = document.createElement("p");
+    p.className = "empty";
+    p.textContent = "No tags yet. Add #tags to a note or file caption.";
+    box.append(p);
+    return;
+  }
 
   for (const { tag, n } of tagCounts) {
     const b = document.createElement("button");
-    b.classList.toggle("active", selectedTag === tag);
     b.append(`#${tag}`);
     const count = document.createElement("span");
     count.className = "count";
     count.textContent = n;
     b.append(count);
-    b.onclick = () => onSelect(selectedTag === tag ? null : tag);
+    b.onclick = () => onSelect(tag);
     box.append(b);
   }
+}
+
+/// The small "filtering by #tag" pill shown above Browse's results when a
+/// tag filter is active.
+export function renderTagFilter(tag, onClear) {
+  const el = $("tag-filter");
+  if (!tag) {
+    el.hidden = true;
+    return;
+  }
+  el.replaceChildren();
+  el.append(`Filtering by #${tag}`);
+  const clear = document.createElement("button");
+  clear.textContent = "Clear";
+  clear.onclick = onClear;
+  el.append(clear);
+  el.hidden = false;
 }
 
 export function renderItems(items, query, editingId, handlers) {
@@ -64,6 +96,85 @@ export function renderItems(items, query, editingId, handlers) {
   }
 }
 
+/// What kind of inline preview an item supports, or null if it's a plain
+/// download (e.g. a generic document that isn't a PDF).
+function previewKind(item) {
+  if (item.kind === "photo") return "image";
+  if (item.kind === "video") return "video";
+  if (item.kind === "voice" || item.kind === "audio") return "audio";
+  if (item.kind === "document" && item.mime_type === "application/pdf") return "pdf";
+  return null;
+}
+
+/// Builds the actual media element for a resolved preview URL. `large`
+/// switches to the fullscreen sizing class instead of the inline-card one.
+function buildMediaNode(kind, url, item, large) {
+  if (kind === "image") {
+    const img = document.createElement("img");
+    img.src = url;
+    img.alt = item.file_name ?? "";
+    img.className = large ? "lightbox-media" : "preview-media";
+    return img;
+  }
+  if (kind === "video") {
+    const video = document.createElement("video");
+    video.src = url;
+    video.controls = true;
+    video.className = large ? "lightbox-media" : "preview-media";
+    return video;
+  }
+  if (kind === "audio") {
+    const audio = document.createElement("audio");
+    audio.src = url;
+    audio.controls = true;
+    audio.className = "preview-media";
+    return audio;
+  }
+  // pdf
+  const iframe = document.createElement("iframe");
+  iframe.src = url;
+  iframe.className = large ? "lightbox-pdf" : "preview-pdf";
+  return iframe;
+}
+
+/// A full-viewport overlay for any content -- images, video, rendered
+/// markdown. `build()` returns the node to display; called fresh each open
+/// so fullscreen views aren't stuck sharing state with the inline preview.
+export function openLightbox(build) {
+  const overlay = document.createElement("div");
+  overlay.className = "lightbox";
+
+  const box = document.createElement("div");
+  box.className = "lightbox-content";
+  box.append(build());
+
+  const close = document.createElement("button");
+  close.className = "ghost small lightbox-close";
+  close.textContent = "Close";
+  const dismiss = () => {
+    overlay.remove();
+    document.removeEventListener("keydown", onKey);
+  };
+  close.onclick = dismiss;
+  overlay.onclick = (e) => {
+    if (e.target === overlay) dismiss();
+  };
+  function onKey(e) {
+    if (e.key === "Escape") dismiss();
+  }
+  document.addEventListener("keydown", onKey);
+
+  overlay.append(box, close);
+  document.body.append(overlay);
+}
+
+function errorNode(message) {
+  const p = document.createElement("p");
+  p.className = "empty";
+  p.textContent = message;
+  return p;
+}
+
 function itemHead(item) {
   const head = document.createElement("div");
   head.className = "item-head";
@@ -72,6 +183,11 @@ function itemHead(item) {
   kind.className = "kind";
   kind.textContent = item.kind;
   head.append(kind);
+
+  const stamp = document.createElement("span");
+  stamp.className = "item-stamp";
+  stamp.textContent = item.id.slice(0, 8);
+  head.append(stamp);
 
   if (item.kind !== "note" && item.file_name) {
     const name = document.createElement("strong");
@@ -90,20 +206,140 @@ function itemHead(item) {
   return head;
 }
 
-function renderItem(item, { onDownload, onEdit, onDelete }) {
+function renderItem(item, { onDownload, onEdit, onDelete, onRenderNote, onResolveUrl }) {
   const el = document.createElement("article");
   el.className = "item";
   el.append(itemHead(item));
 
+  let body = null;
   if (item.content_text) {
-    const body = document.createElement("p");
+    body = document.createElement("p");
     body.className = "item-body";
     body.textContent = item.content_text;
     el.append(body);
   }
 
+  const pKind = previewKind(item);
+  let previewBox = null;
+  if (pKind) {
+    previewBox = document.createElement("div");
+    previewBox.className = "item-preview";
+    previewBox.hidden = true;
+    el.append(previewBox);
+  }
+
   const actions = document.createElement("div");
   actions.className = "item-actions";
+
+  // Notes: toggle between plain text and rendered markdown+LaTeX in place.
+  if (item.kind === "note" && item.content_text && onRenderNote) {
+    let rendered = false;
+    let html = null;
+
+    const renderBtn = document.createElement("button");
+    renderBtn.className = "ghost small";
+    renderBtn.textContent = "Render";
+    renderBtn.onclick = async () => {
+      if (rendered) {
+        body.textContent = item.content_text;
+        body.classList.remove("rendered-note");
+        rendered = false;
+        renderBtn.textContent = "Render";
+        return;
+      }
+      if (!html) {
+        renderBtn.disabled = true;
+        renderBtn.textContent = "Rendering…";
+        try {
+          html = await onRenderNote(item);
+        } catch (e) {
+          renderBtn.disabled = false;
+          renderBtn.textContent = "Render";
+          return show(body, `Couldn't render: ${e.message}`);
+        }
+        renderBtn.disabled = false;
+      }
+      body.innerHTML = html;
+      body.classList.add("rendered-note");
+      rendered = true;
+      renderBtn.textContent = "Show raw";
+    };
+    actions.append(renderBtn);
+
+    const fsBtn = document.createElement("button");
+    fsBtn.className = "ghost small";
+    fsBtn.textContent = "Fullscreen";
+    fsBtn.onclick = async () => {
+      if (!html) {
+        fsBtn.disabled = true;
+        fsBtn.textContent = "Loading…";
+        try {
+          html = await onRenderNote(item);
+        } catch (e) {
+          flash($("boot-error"), `Couldn't render: ${e.message}`, true);
+          return;
+        } finally {
+          fsBtn.disabled = false;
+          fsBtn.textContent = "Fullscreen";
+        }
+      }
+      const box = document.createElement("div");
+      box.className = "rendered-note";
+      box.innerHTML = html;
+      openLightbox(() => box);
+    };
+    actions.append(fsBtn);
+  }
+
+  // Previewable files: load the media inline on demand, with a fullscreen escape hatch.
+  if (pKind && onResolveUrl) {
+    let url = null;
+
+    const previewBtn = document.createElement("button");
+    previewBtn.className = "ghost small";
+    previewBtn.textContent = "Preview";
+    previewBtn.onclick = async () => {
+      if (url) {
+        previewBox.hidden = !previewBox.hidden;
+        previewBtn.textContent = previewBox.hidden ? "Preview" : "Hide preview";
+        return;
+      }
+      previewBtn.disabled = true;
+      previewBtn.textContent = "Loading…";
+      try {
+        url = await onResolveUrl(item);
+        previewBox.replaceChildren(buildMediaNode(pKind, url, item, false));
+        previewBox.hidden = false;
+        previewBtn.textContent = "Hide preview";
+      } catch (e) {
+        previewBox.replaceChildren(errorNode(`Couldn't load preview: ${e.message}`));
+        previewBox.hidden = false;
+        previewBtn.textContent = "Preview";
+      } finally {
+        previewBtn.disabled = false;
+      }
+    };
+    actions.append(previewBtn);
+
+    const fsBtn = document.createElement("button");
+    fsBtn.className = "ghost small";
+    fsBtn.textContent = "Fullscreen";
+    fsBtn.onclick = async () => {
+      fsBtn.disabled = true;
+      const originalText = fsBtn.textContent;
+      fsBtn.textContent = "Loading…";
+      try {
+        if (!url) url = await onResolveUrl(item);
+        openLightbox(() => buildMediaNode(pKind, url, item, true));
+      } catch (e) {
+        flash($("boot-error"), `Couldn't open fullscreen: ${e.message}`, true);
+      } finally {
+        fsBtn.disabled = false;
+        fsBtn.textContent = originalText;
+      }
+    };
+    actions.append(fsBtn);
+  }
 
   if (item.kind !== "note" && item.storage_path) {
     const btn = document.createElement("button");

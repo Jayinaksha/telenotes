@@ -8,8 +8,18 @@ import {
   signOut,
 } from "./supabase.js";
 import * as api from "./api.js";
+import { renderNoteHtml } from "./markdown.js";
 import { fetchItems, fetchStats, fetchTags } from "./data.js";
-import { flash, only, renderItems, renderStats, renderTags, show } from "./render.js";
+import {
+  flash,
+  renderItems,
+  renderStats,
+  renderTagFilter,
+  renderTagList,
+  show,
+  showEntry,
+  showPane,
+} from "./render.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -19,6 +29,7 @@ if (SUPABASE_URL.includes("YOUR-PROJECT-REF")) {
 }
 
 const state = {
+  pane: "write",
   kind: "", // "", "note", or "file"
   tag: null,
   query: "",
@@ -71,12 +82,10 @@ async function route() {
   const session = await getSession();
 
   if (!session) {
-    $("signout").hidden = true;
     $("account").textContent = "";
-    return only("view-auth");
+    return showEntry("view-auth");
   }
 
-  $("signout").hidden = false;
   $("account").textContent = session.user.email;
 
   let linked;
@@ -85,13 +94,70 @@ async function route() {
   } catch (e) {
     return show($("boot-error"), e.message);
   }
-  if (!linked) return only("view-link");
+  if (!linked) return showEntry("view-link");
 
-  only("view-main");
-  await Promise.all([loadTags(), loadItems()]);
+  showEntry("shell");
+  switchPane(state.pane);
 }
 
 onAuthStateChange(() => route());
+
+// ---------------------------------------------------------------------------
+// Panes
+// ---------------------------------------------------------------------------
+
+async function switchPane(name) {
+  state.pane = name;
+  showPane(name);
+  if (name === "browse") await loadItems();
+  else if (name === "tags") await loadTagsPane();
+  else if (name === "stats") await loadStatsPane();
+}
+
+for (const tab of document.querySelectorAll(".navtab")) {
+  tab.addEventListener("click", () => switchPane(tab.dataset.view));
+}
+
+// ---------------------------------------------------------------------------
+// Sidebar collapse
+// ---------------------------------------------------------------------------
+
+const COLLAPSE_KEY = "telenotes:sidebar-collapsed";
+
+function setSidebarCollapsed(collapsed) {
+  $("shell").classList.toggle("collapsed", collapsed);
+  $("collapse-sidebar").setAttribute("aria-label", collapsed ? "Expand sidebar" : "Collapse sidebar");
+  localStorage.setItem(COLLAPSE_KEY, collapsed ? "1" : "0");
+}
+
+setSidebarCollapsed(localStorage.getItem(COLLAPSE_KEY) === "1");
+
+$("collapse-sidebar").addEventListener("click", () => {
+  setSidebarCollapsed(!$("shell").classList.contains("collapsed"));
+});
+
+async function loadTagsPane() {
+  let data;
+  try {
+    data = await fetchTags();
+  } catch (e) {
+    return flash($("boot-error"), e.message, true);
+  }
+  renderTagList(data, (tag) => {
+    state.tag = tag;
+    switchPane("browse");
+  });
+}
+
+async function loadStatsPane() {
+  let tags, stats;
+  try {
+    [tags, stats] = await Promise.all([fetchTags(), fetchStats()]);
+  } catch (e) {
+    return flash($("boot-error"), e.message, true);
+  }
+  renderStats(tags, stats.days, stats.storage);
+}
 
 // ---------------------------------------------------------------------------
 // Data
@@ -114,21 +180,11 @@ async function loadItems() {
     return true;
   });
 
-  render();
-}
-
-async function loadTags() {
-  let data;
-  try {
-    data = await fetchTags();
-  } catch {
-    return;
-  }
-  renderTags(data, state.tag, (tag) => {
-    state.tag = tag;
-    loadTags();
+  renderTagFilter(state.tag, () => {
+    state.tag = null;
     loadItems();
   });
+  render();
 }
 
 // ---------------------------------------------------------------------------
@@ -148,6 +204,8 @@ function render() {
     },
     onSaveEdit,
     onDelete,
+    onRenderNote: (item) => renderNoteHtml(item.content_text),
+    onResolveUrl: (item) => api.resolveUrl(item),
   });
 }
 
@@ -197,14 +255,39 @@ $("form-note").addEventListener("submit", async (e) => {
   const text = input.value.trim();
   if (!text) return;
   const msg = $("note-msg");
+  const btn = $("note-save");
+
+  btn.disabled = true;
+  btn.textContent = "Saving…";
   try {
     await api.addNote(text);
     input.value = "";
-    flash(msg, "Saved.");
-    await loadItems();
+    input.style.height = "";
+    msg.hidden = true;
+    btn.textContent = "Saved";
+    setTimeout(() => (btn.textContent = "Save note"), 1200);
   } catch (err) {
+    btn.disabled = false;
+    btn.textContent = "Save note";
     flash(msg, err.message, true);
   }
+});
+
+// Doc-style textarea: grows with content, and the Save button only lights
+// up once there's something worth saving.
+$("note-text").addEventListener("input", (e) => {
+  e.target.style.height = "auto";
+  e.target.style.height = `${e.target.scrollHeight}px`;
+  $("note-save").disabled = e.target.value.trim().length === 0;
+  if (!$("note-msg").hidden) $("note-msg").hidden = true;
+});
+
+$("toggle-upload").addEventListener("click", () => {
+  $("form-upload").hidden = !$("form-upload").hidden;
+});
+
+$("cancel-upload").addEventListener("click", () => {
+  $("form-upload").hidden = true;
 });
 
 $("form-upload").addEventListener("submit", async (e) => {
@@ -217,30 +300,12 @@ $("form-upload").addEventListener("submit", async (e) => {
     await api.uploadFile(file, $("upload-kind").value, $("upload-caption").value.trim());
     fileInput.value = "";
     $("upload-caption").value = "";
-    flash(msg, "Uploaded.");
+    $("form-upload").hidden = true;
     await loadItems();
   } catch (err) {
     flash(msg, err.message, true);
   }
 });
-
-// ---------------------------------------------------------------------------
-// Stats
-// ---------------------------------------------------------------------------
-
-$("nav-stats").addEventListener("click", async () => {
-  let tags, stats;
-  try {
-    [tags, stats] = await Promise.all([fetchTags(), fetchStats()]);
-  } catch (e) {
-    flash($("boot-error"), e.message, true);
-    return;
-  }
-  renderStats(tags, stats.days, stats.storage);
-  only("view-stats");
-});
-
-$("stats-back").addEventListener("click", () => only("view-main"));
 
 // ---------------------------------------------------------------------------
 // Controls

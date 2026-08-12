@@ -6,19 +6,16 @@
   <meta name="robots" content="noindex, nofollow">
   <title>telenotes</title>
   <link rel="stylesheet" href="style.css">
+  <!-- Only fetched because the browser needs it to lay out KaTeX's markup; the
+       renderer itself (marked/katex/dompurify, see markdown.js) loads on demand,
+       the first time a note is actually rendered. -->
+  <link rel="stylesheet" href="https://esm.sh/katex@0.16.9/dist/katex.min.css">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='13'>&#128221;</text></svg>">
 </head>
 <body>
-  <header class="topbar">
-    <h1>telenotes</h1>
-    <div class="topbar-right">
-      <span id="account" class="muted"></span>
-      <button id="signout" class="ghost" hidden>Sign out</button>
-    </div>
-  </header>
-
   <!-- Signed out -->
-  <section id="view-auth" class="panel" hidden>
+  <section id="view-auth" class="panel entry" hidden>
+    <p class="entry-brand mono">telenotes</p>
     <h2>Sign in</h2>
     <p class="muted">
       We'll email you a one-time link. No password to remember.
@@ -31,7 +28,8 @@
   </section>
 
   <!-- Signed in, but no Telegram account attached yet -->
-  <section id="view-link" class="panel" hidden>
+  <section id="view-link" class="panel entry" hidden>
+    <p class="entry-brand mono">telenotes</p>
     <h2>Connect Telegram</h2>
     <p class="muted">
       Send <code>/link</code> to your bot, then paste the code it replies with.
@@ -44,58 +42,87 @@
     <p id="link-msg" class="msg" hidden></p>
   </section>
 
-  <!-- Main dashboard -->
-  <main id="view-main" hidden>
-    <div class="controls">
-      <input id="search" type="search" placeholder="Search notes, captions, filenames…">
-      <div class="filters">
-        <button class="chip active" data-kind="">All</button>
-        <button class="chip" data-kind="note">Notes</button>
-        <button class="chip" data-kind="file">Files</button>
+  <!-- Main app shell -->
+  <div id="shell" hidden>
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-head">
+        <p class="brand">telenotes</p>
+        <button id="collapse-sidebar" class="ghost small collapse-btn" title="Collapse" aria-label="Collapse sidebar">&laquo;</button>
       </div>
-      <button id="nav-stats" class="ghost">Stats</button>
-    </div>
+      <nav class="sidenav" id="sidenav">
+        <button class="navtab active" data-view="write" title="Write"><span class="navtab-dot mono">W</span><span class="navtab-label">Write</span></button>
+        <button class="navtab" data-view="browse" title="Browse"><span class="navtab-dot mono">B</span><span class="navtab-label">Browse</span></button>
+        <button class="navtab" data-view="tags" title="Tags"><span class="navtab-dot mono">T</span><span class="navtab-label">Tags</span></button>
+        <button class="navtab" data-view="stats" title="Stats"><span class="navtab-dot mono">S</span><span class="navtab-label">Stats</span></button>
+      </nav>
+      <div class="sidebar-foot">
+        <span id="account" class="mono"></span>
+        <button id="signout" class="ghost small">Sign out</button>
+      </div>
+    </aside>
 
-    <div class="write-forms">
-      <form id="form-note" class="write-form">
-        <textarea id="note-text" rows="2" placeholder="Write a note… #tags work here too"></textarea>
-        <button type="submit">Add note</button>
-        <p id="note-msg" class="msg" hidden></p>
-      </form>
+    <main class="content">
+      <!-- Write: a doc-style page, notes only -->
+      <section id="pane-write" class="pane pane-doc">
+        <form id="form-note" class="doc-form">
+          <textarea id="note-text" class="doc-textarea" rows="3"
+            placeholder="Write here… #tags work too" autofocus></textarea>
+          <div class="doc-actions">
+            <p id="note-msg" class="msg" hidden></p>
+            <button id="note-save" type="submit" disabled>Save note</button>
+          </div>
+        </form>
+      </section>
 
-      <form id="form-upload" class="write-form">
-        <input id="upload-file" type="file">
-        <select id="upload-kind">
-          <option value="document">Document</option>
-          <option value="photo">Photo</option>
-          <option value="voice">Voice</option>
-          <option value="video">Video</option>
-          <option value="audio">Audio</option>
-        </select>
-        <input id="upload-caption" placeholder="Caption (optional, #tags work here too)">
-        <button type="submit">Upload</button>
-        <p id="upload-msg" class="msg" hidden></p>
-      </form>
-    </div>
+      <!-- Browse -->
+      <section id="pane-browse" class="pane" hidden>
+        <h2>Browse</h2>
+        <div class="controls">
+          <input id="search" type="search" placeholder="Search notes, captions, filenames…">
+          <div class="filters">
+            <button class="chip active" data-kind="">All</button>
+            <button class="chip" data-kind="note">Notes</button>
+            <button class="chip" data-kind="file">Files</button>
+          </div>
+          <button id="toggle-upload" class="ghost" type="button">+ Upload</button>
+        </div>
 
-    <div class="layout">
-      <aside id="tags" class="tags"></aside>
-      <section id="results" class="results"></section>
-    </div>
-  </main>
+        <form id="form-upload" class="upload-inline" hidden>
+          <input id="upload-file" type="file">
+          <select id="upload-kind">
+            <option value="document">Document</option>
+            <option value="photo">Photo</option>
+            <option value="voice">Voice</option>
+            <option value="video">Video</option>
+            <option value="audio">Audio</option>
+          </select>
+          <input id="upload-caption" placeholder="Caption (optional, #tags work here too)">
+          <button type="submit">Upload</button>
+          <button type="button" id="cancel-upload" class="ghost small">Cancel</button>
+          <p id="upload-msg" class="msg" hidden></p>
+        </form>
 
-  <!-- Stats -->
-  <section id="view-stats" class="panel stats-panel" hidden>
-    <div class="stats-head">
-      <h2>Stats</h2>
-      <button id="stats-back" class="ghost">Back</button>
-    </div>
-    <div id="stats-tiles" class="stats-tiles"></div>
-    <h3>Last 30 days</h3>
-    <div id="stats-activity" class="stats-activity"></div>
-    <h3>Storage</h3>
-    <div id="stats-storage" class="stats-storage"></div>
-  </section>
+        <p id="tag-filter" class="tag-filter" hidden></p>
+        <section id="results" class="results"></section>
+      </section>
+
+      <!-- Tags -->
+      <section id="pane-tags" class="pane" hidden>
+        <h2>Tags</h2>
+        <div id="tag-list" class="tag-list"></div>
+      </section>
+
+      <!-- Stats -->
+      <section id="pane-stats" class="pane" hidden>
+        <h2>Stats</h2>
+        <div id="stats-tiles" class="stats-tiles"></div>
+        <h3>Last 30 days</h3>
+        <div id="stats-activity" class="stats-activity"></div>
+        <h3>Storage</h3>
+        <div id="stats-storage" class="stats-storage"></div>
+      </section>
+    </main>
+  </div>
 
   <p id="boot-error" class="panel error" hidden></p>
 

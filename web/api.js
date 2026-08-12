@@ -61,12 +61,17 @@ export async function deleteItem(itemId) {
   return ok(resp);
 }
 
-/// Swaps an item id for a short-lived download token, then lets the bot
-/// service serve the bytes. The browser never sees storage credentials.
-export async function download(item) {
+/// Swaps an item id for a short-lived download token and returns the URL it
+/// resolves to. The browser never sees storage credentials -- only this
+/// signed, single-purpose URL, minted fresh per call.
+export async function resolveUrl(item) {
   const { data: token, error } = await supabase.rpc("issue_download_token", {
     item_id: item.id,
   });
   if (error) throw error;
-  window.open(`${BOT_URL}/d/${token}`, "_blank", "noopener");
+  return `${BOT_URL}/d/${token}`;
+}
+
+export async function download(item) {
+  window.open(await resolveUrl(item), "_blank", "noopener");
 }
