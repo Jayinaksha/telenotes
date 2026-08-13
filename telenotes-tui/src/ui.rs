@@ -99,6 +99,10 @@ fn draw_detail(f: &mut Frame, app: &App, area: Rect) {
     if let Some(name) = &item.file_name {
         lines.push(Line::from(format!("file: {name}")));
     }
+    if let Some(body) = &app.detail_body {
+        lines.push(Line::from(""));
+        lines.extend(body.iter().cloned());
+    }
     let block = Block::default().title("Detail").borders(Borders::ALL);
     f.render_widget(
         Paragraph::new(lines)

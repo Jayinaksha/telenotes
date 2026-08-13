@@ -1,10 +1,12 @@
 use std::time::{Duration, Instant};
 
 use crossterm::event::KeyCode;
+use ratatui::text::Line;
 use telenotes_core::Item;
 use uuid::Uuid;
 
 use crate::botclient::BotClient;
+use crate::markdown;
 use crate::session::Session;
 use crate::supabase::{DayCount, StorageRow, SupabaseClient, TagCount};
 
@@ -64,6 +66,11 @@ pub struct App {
     pub items: Vec<Item>,
     pub selected: usize,
     pending_delete: Option<Uuid>,
+    /// Rendered markdown for the item currently open in Detail, when it's a
+    /// document that looks like one -- `None` otherwise, including while a
+    /// fetch is still in flight (the key handler blocks on it, same as
+    /// every other network call in this app; see `run()` in main.rs).
+    pub detail_body: Option<Vec<Line<'static>>>,
 
     pub search_query: String,
 
@@ -102,6 +109,7 @@ impl App {
             items: Vec::new(),
             selected: 0,
             pending_delete: None,
+            detail_body: None,
             search_query: String::new(),
             tags: Vec::new(),
             days: Vec::new(),
@@ -312,6 +320,7 @@ impl App {
             KeyCode::Enter => {
                 if !self.items.is_empty() {
                     self.screen = Screen::Detail;
+                    self.load_detail_body().await;
                 }
             }
             KeyCode::Char('/') => {
@@ -629,6 +638,41 @@ impl App {
                 self.refresh_items().await;
             }
             Err(e) => self.set_status(format!("could not delete: {e}")),
+        }
+    }
+
+    /// Fetches and renders a document's own text when it looks like
+    /// markdown, so Detail can show more than just the file name. Notes
+    /// already show their text via `content_text` (no fetch needed); any
+    /// other document kind (PDF, image, ...) has no plain-text rendering
+    /// story here, so `detail_body` just stays `None` for those.
+    async fn load_detail_body(&mut self) {
+        self.detail_body = None;
+        let Some(item) = self.items.get(self.selected).cloned() else {
+            return;
+        };
+        if item.kind == "note"
+            || !markdown::is_markdown_document(item.file_name.as_deref(), item.mime_type.as_deref())
+        {
+            return;
+        }
+        if !self.ensure_fresh_session().await {
+            return;
+        }
+        let session = self.session.clone().unwrap();
+        let token = match self.supabase.issue_download_token(&session, item.id).await {
+            Ok(t) => t,
+            Err(e) => {
+                self.set_status(format!("could not load preview: {e}"));
+                return;
+            }
+        };
+        match self.bot.download(&token).await {
+            Ok(bytes) => {
+                let text = String::from_utf8_lossy(&bytes);
+                self.detail_body = Some(markdown::render(&text));
+            }
+            Err(e) => self.set_status(format!("could not load preview: {e}")),
         }
     }
 
