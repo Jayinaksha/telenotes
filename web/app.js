@@ -210,8 +210,19 @@ function render() {
     onDelete,
     onRenderNote: (item) => renderNoteHtml(item.content_text),
     onResolveUrl: (item) => api.resolveUrl(item),
+    onRenderDocument,
     onRelated: (item) => api.relatedItems(item.id),
   });
+}
+
+/// Fetches an uploaded markdown file's own text (as opposed to a note's
+/// `content_text`, which is already in hand) and runs it through the same
+/// renderer notes use.
+async function onRenderDocument(item) {
+  const url = await api.resolveUrl(item, { raw: true });
+  const resp = await fetch(url);
+  if (!resp.ok) throw new Error(`couldn't fetch file (${resp.status})`);
+  return renderNoteHtml(await resp.text());
 }
 
 async function onDownload(item, btn) {

@@ -96,13 +96,22 @@ export function renderItems(items, query, editingId, handlers) {
   }
 }
 
+/// Browsers often send an empty or wrong Content-Type for .md uploads, so
+/// fall back to the file extension when the declared mime type doesn't say
+/// markdown explicitly.
+function isMarkdownDocument(item) {
+  if (item.mime_type === "text/markdown") return true;
+  return /\.(md|markdown)$/i.test(item.file_name ?? "");
+}
+
 /// What kind of inline preview an item supports, or null if it's a plain
-/// download (e.g. a generic document that isn't a PDF).
+/// download (e.g. a generic document that isn't a PDF or markdown file).
 function previewKind(item) {
   if (item.kind === "photo") return "image";
   if (item.kind === "video") return "video";
   if (item.kind === "voice" || item.kind === "audio") return "audio";
   if (item.kind === "document" && item.mime_type === "application/pdf") return "pdf";
+  if (item.kind === "document" && isMarkdownDocument(item)) return "markdown";
   return null;
 }
 
@@ -135,6 +144,13 @@ function buildMediaNode(kind, url, item, large) {
   iframe.src = url;
   iframe.className = large ? "lightbox-pdf" : "preview-pdf";
   return iframe;
+}
+
+function markdownNode(html) {
+  const div = document.createElement("div");
+  div.className = "rendered-note";
+  div.innerHTML = html;
+  return div;
 }
 
 /// A full-viewport overlay for any content -- images, video, rendered
@@ -244,7 +260,7 @@ function itemHead(item) {
   return head;
 }
 
-function renderItem(item, { onDownload, onEdit, onDelete, onRenderNote, onResolveUrl, onRelated }) {
+function renderItem(item, { onDownload, onEdit, onDelete, onRenderNote, onResolveUrl, onRenderDocument, onRelated }) {
   const el = document.createElement("article");
   el.className = "item";
   el.append(itemHead(item));
@@ -334,15 +350,19 @@ function renderItem(item, { onDownload, onEdit, onDelete, onRenderNote, onResolv
     actions.append(fsBtn);
   }
 
-  // Previewable files: load the media inline on demand, with a fullscreen escape hatch.
-  if (pKind && onResolveUrl) {
+  // Previewable files: load the content inline on demand, with a fullscreen
+  // escape hatch. Markdown documents render through the same pipeline as
+  // notes (fetch text, then onRenderDocument); everything else resolves to
+  // a signed URL and gets a native media element.
+  if (pKind === "markdown" ? onRenderDocument : pKind && onResolveUrl) {
     let url = null;
+    let html = null;
 
     const previewBtn = document.createElement("button");
     previewBtn.className = "ghost small";
     previewBtn.textContent = "Preview";
     previewBtn.onclick = async () => {
-      if (url) {
+      if (url || html) {
         previewBox.hidden = !previewBox.hidden;
         previewBtn.textContent = previewBox.hidden ? "Preview" : "Hide preview";
         return;
@@ -350,8 +370,13 @@ function renderItem(item, { onDownload, onEdit, onDelete, onRenderNote, onResolv
       previewBtn.disabled = true;
       previewBtn.textContent = "Loading…";
       try {
-        url = await onResolveUrl(item);
-        previewBox.replaceChildren(buildMediaNode(pKind, url, item, false));
+        if (pKind === "markdown") {
+          html = await onRenderDocument(item);
+          previewBox.replaceChildren(markdownNode(html));
+        } else {
+          url = await onResolveUrl(item);
+          previewBox.replaceChildren(buildMediaNode(pKind, url, item, false));
+        }
         previewBox.hidden = false;
         previewBtn.textContent = "Hide preview";
       } catch (e) {
@@ -372,8 +397,13 @@ function renderItem(item, { onDownload, onEdit, onDelete, onRenderNote, onResolv
       const originalText = fsBtn.textContent;
       fsBtn.textContent = "Loading…";
       try {
-        if (!url) url = await onResolveUrl(item);
-        openLightbox(() => buildMediaNode(pKind, url, item, true));
+        if (pKind === "markdown") {
+          if (!html) html = await onRenderDocument(item);
+          openLightbox(() => markdownNode(html));
+        } else {
+          if (!url) url = await onResolveUrl(item);
+          openLightbox(() => buildMediaNode(pKind, url, item, true));
+        }
       } catch (e) {
         flash($("boot-error"), `Couldn't open fullscreen: ${e.message}`, true);
       } finally {

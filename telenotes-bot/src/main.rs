@@ -10,12 +10,13 @@ mod storage;
 use std::sync::Arc;
 
 use anyhow::Context;
-use axum::extract::{DefaultBodyLimit, Path, State};
+use axum::extract::{DefaultBodyLimit, Path, Query, State};
 use axum::http::{header, HeaderMap, HeaderValue, Method, StatusCode};
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use deadpool_postgres::Pool;
+use serde::Deserialize;
 use teloxide::prelude::*;
 use teloxide::types::{BotCommand, Update};
 use tower_http::cors::CorsLayer;
@@ -149,9 +150,12 @@ async fn main() -> anyhow::Result<()> {
         tracing::warn!("could not register command menu: {e:?}");
     }
 
-    // These are reached via `fetch()` from the dashboard's origin, unlike
-    // `/d/{token}` (plain browser navigation, no preflight involved) -- hence
-    // the CORS layer scoped to just this sub-router.
+    // These are reached via `fetch()` from the dashboard's origin -- hence
+    // the CORS layer scoped to just this sub-router. `/d/{token}` needs GET
+    // here too: it's still reachable by plain browser navigation (downloads,
+    // `<img>`/`<video>`/`<iframe>` previews) where CORS never applied, but
+    // the markdown-document preview reads its response body via `fetch()`,
+    // which the browser blocks cross-origin without an ACAO header.
     let cors = CorsLayer::new()
         .allow_origin(
             config
@@ -159,7 +163,7 @@ async fn main() -> anyhow::Result<()> {
                 .parse::<HeaderValue>()
                 .context("DASHBOARD_ORIGIN is not a valid header value")?,
         )
-        .allow_methods([Method::POST, Method::DELETE])
+        .allow_methods([Method::GET, Method::POST, Method::DELETE])
         .allow_headers([header::CONTENT_TYPE]);
 
     let state = AppState {
@@ -178,15 +182,13 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/items/{item_id}", delete(api::delete_item_handler))
         .route("/api/files", post(api::upload_file_handler))
         .route("/api/semantic-search", post(api::semantic_search_handler))
+        .route("/d/{token}", get(download_handler))
         .layer(DefaultBodyLimit::max(MAX_UPLOAD_BYTES))
         .layer(cors);
 
     let app = Router::new()
         .route("/webhook", post(webhook_handler))
         .route("/health", get(health_handler))
-        // Reached by plain browser navigation from the dashboard, so no CORS
-        // preflight is involved.
-        .route("/d/{token}", get(download_handler))
         .merge(api)
         .with_state(state);
 
@@ -246,13 +248,32 @@ async fn health_handler(State(state): State<AppState>) -> StatusCode {
     }
 }
 
+#[derive(Deserialize)]
+struct DownloadParams {
+    #[serde(default)]
+    raw: bool,
+}
+
 /// Trades a token minted by Postgres' `issue_download_token` for the file.
 ///
 /// The token *is* the authorization: it only exists because an authenticated
 /// user passed the RLS-backed ownership check in the database. For R2 we hand
 /// back a redirect to a presigned URL so the bytes never transit this service;
 /// GitHub-backed items are streamed through.
-async fn download_handler(State(state): State<AppState>, Path(token): Path<String>) -> Response {
+///
+/// `?raw=1` skips the presigned-URL redirect and always streams the bytes
+/// through the bot instead. Plain navigation and `<img>`/`<video>`/`<iframe>`
+/// previews don't need it -- those load cross-origin fine without CORS. But
+/// the markdown-document preview reads the body via `fetch()`, and a redirect
+/// to R2 would hand the browser a response with no `Access-Control-Allow-*`
+/// header (R2's bucket CORS isn't configured for the dashboard origin), which
+/// the browser refuses to expose to JS. Streaming through this service keeps
+/// it under the CORS layer already scoped to `DASHBOARD_ORIGIN`.
+async fn download_handler(
+    State(state): State<AppState>,
+    Path(token): Path<String>,
+    Query(params): Query<DownloadParams>,
+) -> Response {
     let item = match db::item_for_download_token(&state.db, &token).await {
         Ok(Some(item)) => item,
         Ok(None) => return (StatusCode::NOT_FOUND, "unknown or expired link").into_response(),
@@ -266,12 +287,14 @@ async fn download_handler(State(state): State<AppState>, Path(token): Path<Strin
         return (StatusCode::NOT_FOUND, "item has no stored file").into_response();
     };
 
-    if let Some(url) =
-        state
-            .vault
-            .presigned_get(item.backend(), &path, std::time::Duration::from_secs(300))
-    {
-        return Redirect::temporary(&url).into_response();
+    if !params.raw {
+        if let Some(url) =
+            state
+                .vault
+                .presigned_get(item.backend(), &path, std::time::Duration::from_secs(300))
+        {
+            return Redirect::temporary(&url).into_response();
+        }
     }
 
     match state.vault.get(item.backend(), &path).await {

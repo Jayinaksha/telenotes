@@ -321,8 +321,11 @@ Skip this and everything else works exactly as before — it's additive.
 
 1. SQL Editor → run
    [`migrations/0004_semantic_search.sql`](migrations/0004_semantic_search.sql),
-   then [`migrations/0005_search_token.sql`](migrations/0005_search_token.sql).
-   Both are safe to re-run.
+   then [`migrations/0005_search_token.sql`](migrations/0005_search_token.sql),
+   then [`migrations/0006_chunks_select_grant.sql`](migrations/0006_chunks_select_grant.sql)
+   (0004 alone leaves the "Related" button erroring with "permission denied
+   for table chunks" — it revoked `chunks` access from `authenticated` but
+   never granted it back). All three are safe to re-run.
 2. [voyageai.com](https://www.voyageai.com) → sign up → API keys. The free
    tier is 200M tokens, which is a lot of notes and papers. Copy the key →
    `VOYAGE_API_KEY`.

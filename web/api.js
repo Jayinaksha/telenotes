@@ -87,12 +87,19 @@ export async function semanticSearch(query) {
 /// Swaps an item id for a short-lived download token and returns the URL it
 /// resolves to. The browser never sees storage credentials -- only this
 /// signed, single-purpose URL, minted fresh per call.
-export async function resolveUrl(item) {
+///
+/// `raw: true` asks the bot to stream the bytes itself instead of
+/// redirecting to a presigned storage URL. Media previews (`<img>`,
+/// `<video>`, `<iframe>`) don't need that -- cross-origin loads via those
+/// elements don't go through CORS -- but reading the body with `fetch()`
+/// (the markdown-document preview) does, and the storage bucket's CORS isn't
+/// set up for the dashboard's origin.
+export async function resolveUrl(item, { raw = false } = {}) {
   const { data: token, error } = await supabase.rpc("issue_download_token", {
     item_id: item.id,
   });
   if (error) throw error;
-  return `${BOT_URL}/d/${token}`;
+  return `${BOT_URL}/d/${token}${raw ? "?raw=1" : ""}`;
 }
 
 export async function download(item) {
