@@ -1,3 +1,5 @@
+use std::time::{Duration, Instant};
+
 use crossterm::event::KeyCode;
 use telenotes_core::Item;
 use uuid::Uuid;
@@ -7,6 +9,13 @@ use crate::session::Session;
 use crate::supabase::{DayCount, StorageRow, SupabaseClient, TagCount};
 
 pub const UPLOAD_KINDS: [&str; 5] = ["document", "photo", "voice", "video", "audio"];
+
+/// How long a status message (e.g. "Note saved.") stays before the key-hint
+/// bar takes over the status line again. Without this it stuck around
+/// forever -- the first action of the session would permanently bury the
+/// hints, since almost every action sets a status and next to nothing ever
+/// cleared it.
+const STATUS_TTL: Duration = Duration::from_secs(4);
 
 pub enum Screen {
     Login,
@@ -46,6 +55,7 @@ pub struct App {
     pub screen: Screen,
     pub should_quit: bool,
     pub status: Option<String>,
+    status_set_at: Option<Instant>,
 
     pub login_stage: LoginStage,
     pub login_email: String,
@@ -85,6 +95,7 @@ impl App {
             screen: Screen::Login,
             should_quit: false,
             status: None,
+            status_set_at: None,
             login_stage: LoginStage::Email,
             login_email: String::new(),
             login_code: String::new(),
@@ -106,6 +117,28 @@ impl App {
             edit_file_name: String::new(),
             edit_mime_type: String::new(),
             edit_focus: EditFocus::Text,
+        }
+    }
+
+    pub fn set_status(&mut self, message: impl Into<String>) {
+        self.status = Some(message.into());
+        self.status_set_at = Some(Instant::now());
+    }
+
+    pub fn clear_status(&mut self) {
+        self.status = None;
+        self.status_set_at = None;
+    }
+
+    /// Called once per event-loop tick regardless of input, so a status
+    /// message fades back to the key-hint bar on its own after `STATUS_TTL`
+    /// even if the user never presses another key.
+    pub fn expire_status(&mut self) {
+        if self
+            .status_set_at
+            .is_some_and(|t| t.elapsed() >= STATUS_TTL)
+        {
+            self.clear_status();
         }
     }
 
@@ -162,7 +195,7 @@ impl App {
                 true
             }
             Err(e) => {
-                self.status = Some(format!("session expired, please log in again: {e}"));
+                self.set_status(format!("session expired, please log in again: {e}"));
                 self.session = None;
                 self.screen = Screen::Login;
                 false
@@ -180,7 +213,7 @@ impl App {
                 self.items = items;
                 self.selected = self.selected.min(self.items.len().saturating_sub(1));
             }
-            Err(e) => self.status = Some(format!("could not load items: {e}")),
+            Err(e) => self.set_status(format!("could not load items: {e}")),
         }
     }
 
@@ -192,21 +225,21 @@ impl App {
         match self.supabase.tag_counts(&session).await {
             Ok(tags) => self.tags = tags,
             Err(e) => {
-                self.status = Some(format!("could not load tags: {e}"));
+                self.set_status(format!("could not load tags: {e}"));
                 return;
             }
         }
         match self.supabase.items_per_day(&session, 30).await {
             Ok(days) => self.days = days,
             Err(e) => {
-                self.status = Some(format!("could not load activity: {e}"));
+                self.set_status(format!("could not load activity: {e}"));
                 return;
             }
         }
         match self.supabase.storage_breakdown(&session).await {
             Ok(rows) => self.storage = rows,
             Err(e) => {
-                self.status = Some(format!("could not load storage breakdown: {e}"));
+                self.set_status(format!("could not load storage breakdown: {e}"));
                 return;
             }
         }
@@ -222,10 +255,10 @@ impl App {
                     }
                     match self.supabase.request_otp(self.login_email.trim()).await {
                         Ok(()) => {
-                            self.status = Some("Code sent -- check your email.".to_string());
+                            self.set_status("Code sent -- check your email.".to_string());
                             self.login_stage = LoginStage::Code;
                         }
-                        Err(e) => self.status = Some(format!("could not send code: {e}")),
+                        Err(e) => self.set_status(format!("could not send code: {e}")),
                     }
                 }
                 KeyCode::Char(c) => self.login_email.push(c),
@@ -244,11 +277,11 @@ impl App {
                             let _ = session.save().await;
                             self.session = Some(session);
                             self.login_code.clear();
-                            self.status = None;
+                            self.clear_status();
                             self.screen = Screen::List;
                             self.refresh_items().await;
                         }
-                        Err(e) => self.status = Some(format!("login failed: {e}")),
+                        Err(e) => self.set_status(format!("login failed: {e}")),
                     }
                 }
                 KeyCode::Char(c) => self.login_code.push(c),
@@ -315,7 +348,7 @@ impl App {
                         self.delete_selected().await;
                     } else {
                         self.pending_delete = Some(item.id);
-                        self.status = Some(
+                        self.set_status(
                             "Press x again to confirm delete, any other key cancels.".to_string(),
                         );
                     }
@@ -344,7 +377,7 @@ impl App {
                         self.selected = 0;
                         self.screen = Screen::List;
                     }
-                    Err(e) => self.status = Some(format!("search failed: {e}")),
+                    Err(e) => self.set_status(format!("search failed: {e}")),
                 }
             }
             KeyCode::Char(c) => self.search_query.push(c),
@@ -373,18 +406,18 @@ impl App {
                 {
                     Ok(t) => t,
                     Err(e) => {
-                        self.status = Some(format!("could not save note: {e}"));
+                        self.set_status(format!("could not save note: {e}"));
                         return;
                     }
                 };
                 match self.bot.create_note(&token, &self.note_text).await {
                     Ok(_) => {
-                        self.status = Some("Note saved.".to_string());
+                        self.set_status("Note saved.".to_string());
                         self.note_text.clear();
                         self.screen = Screen::List;
                         self.refresh_items().await;
                     }
-                    Err(e) => self.status = Some(format!("could not save note: {e}")),
+                    Err(e) => self.set_status(format!("could not save note: {e}")),
                 }
             }
             KeyCode::Char(c) => self.note_text.push(c),
@@ -435,13 +468,13 @@ impl App {
     async fn submit_upload(&mut self) {
         let path = self.upload_path.trim().to_string();
         if path.is_empty() {
-            self.status = Some("enter a file path first".to_string());
+            self.set_status("enter a file path first".to_string());
             return;
         }
         let bytes = match tokio::fs::read(&path).await {
             Ok(b) => b,
             Err(e) => {
-                self.status = Some(format!("could not read {path}: {e}"));
+                self.set_status(format!("could not read {path}: {e}"));
                 return;
             }
         };
@@ -462,7 +495,7 @@ impl App {
         {
             Ok(t) => t,
             Err(e) => {
-                self.status = Some(format!("could not upload: {e}"));
+                self.set_status(format!("could not upload: {e}"));
                 return;
             }
         };
@@ -474,13 +507,13 @@ impl App {
             .await
         {
             Ok(_) => {
-                self.status = Some("File uploaded.".to_string());
+                self.set_status("File uploaded.".to_string());
                 self.upload_path.clear();
                 self.upload_caption.clear();
                 self.screen = Screen::List;
                 self.refresh_items().await;
             }
-            Err(e) => self.status = Some(format!("could not upload: {e}")),
+            Err(e) => self.set_status(format!("could not upload: {e}")),
         }
     }
 
@@ -535,7 +568,7 @@ impl App {
         {
             Ok(t) => t,
             Err(e) => {
-                self.status = Some(format!("could not edit: {e}"));
+                self.set_status(format!("could not edit: {e}"));
                 return;
             }
         };
@@ -563,11 +596,11 @@ impl App {
             .await
         {
             Ok(_) => {
-                self.status = Some("Saved.".to_string());
+                self.set_status("Saved.".to_string());
                 self.screen = Screen::List;
                 self.refresh_items().await;
             }
-            Err(e) => self.status = Some(format!("could not edit: {e}")),
+            Err(e) => self.set_status(format!("could not edit: {e}")),
         }
     }
 
@@ -586,16 +619,16 @@ impl App {
         {
             Ok(t) => t,
             Err(e) => {
-                self.status = Some(format!("could not delete: {e}"));
+                self.set_status(format!("could not delete: {e}"));
                 return;
             }
         };
         match self.bot.delete_item(&token, item.id).await {
             Ok(_) => {
-                self.status = Some(format!("Deleted {}.", item.short_id()));
+                self.set_status(format!("Deleted {}.", item.short_id()));
                 self.refresh_items().await;
             }
-            Err(e) => self.status = Some(format!("could not delete: {e}")),
+            Err(e) => self.set_status(format!("could not delete: {e}")),
         }
     }
 
@@ -604,7 +637,7 @@ impl App {
             return;
         };
         if item.kind == "note" {
-            self.status = Some("Notes have no file to download.".to_string());
+            self.set_status("Notes have no file to download.".to_string());
             return;
         }
         if !self.ensure_fresh_session().await {
@@ -614,7 +647,7 @@ impl App {
         let token = match self.supabase.issue_download_token(&session, item.id).await {
             Ok(t) => t,
             Err(e) => {
-                self.status = Some(format!("could not download: {e}"));
+                self.set_status(format!("could not download: {e}"));
                 return;
             }
         };
@@ -625,11 +658,11 @@ impl App {
                     .clone()
                     .unwrap_or_else(|| format!("{}.bin", item.short_id()));
                 match tokio::fs::write(&name, &bytes).await {
-                    Ok(()) => self.status = Some(format!("Saved to ./{name}")),
-                    Err(e) => self.status = Some(format!("could not write {name}: {e}")),
+                    Ok(()) => self.set_status(format!("Saved to ./{name}")),
+                    Err(e) => self.set_status(format!("could not write {name}: {e}")),
                 }
             }
-            Err(e) => self.status = Some(format!("could not download: {e}")),
+            Err(e) => self.set_status(format!("could not download: {e}")),
         }
     }
 }

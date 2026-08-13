@@ -58,6 +58,7 @@ fn stop_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()
 /// for this task to be doing in between.
 async fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> Result<()> {
     loop {
+        app.expire_status();
         terminal.draw(|f| ui::draw(f, app))?;
 
         if event::poll(Duration::from_millis(200))? {
