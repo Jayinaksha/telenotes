@@ -99,7 +99,7 @@ export async function resolveUrl(item, { raw = false } = {}) {
     item_id: item.id,
   });
   if (error) throw error;
-  return `${BOT_URL}/d/${token}${raw ? "?raw=1" : ""}`;
+  return `${BOT_URL}/d/${token}${raw ? "?raw=true" : ""}`;
 }
 
 export async function download(item) {
