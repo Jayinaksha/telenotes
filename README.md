@@ -133,6 +133,3 @@ Apache License 2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE).
 
 ---
 
-Extracted from [`Jayinaksha/reflect`](https://github.com/Jayinaksha/reflect)
-(commit `c4cfe14`), where it had been sharing a repo with unrelated UAV/HRLLC
-research.
