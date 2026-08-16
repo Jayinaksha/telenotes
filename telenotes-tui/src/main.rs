@@ -1,6 +1,7 @@
 mod app;
 mod botclient;
 mod config;
+mod html;
 mod markdown;
 mod session;
 mod supabase;

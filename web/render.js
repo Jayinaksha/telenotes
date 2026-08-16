@@ -104,14 +104,23 @@ function isMarkdownDocument(item) {
   return /\.(md|markdown)$/i.test(item.file_name ?? "");
 }
 
+/// Same unreliable-mime-type story as markdown -- fall back to the
+/// extension for uploaded HTML files.
+function isHtmlDocument(item) {
+  if (item.mime_type === "text/html") return true;
+  return /\.(html|htm)$/i.test(item.file_name ?? "");
+}
+
 /// What kind of inline preview an item supports, or null if it's a plain
-/// download (e.g. a generic document that isn't a PDF or markdown file).
+/// download (e.g. a generic document that isn't a PDF, markdown, or HTML
+/// file).
 function previewKind(item) {
   if (item.kind === "photo") return "image";
   if (item.kind === "video") return "video";
   if (item.kind === "voice" || item.kind === "audio") return "audio";
   if (item.kind === "document" && item.mime_type === "application/pdf") return "pdf";
   if (item.kind === "document" && isMarkdownDocument(item)) return "markdown";
+  if (item.kind === "document" && isHtmlDocument(item)) return "html";
   return null;
 }
 
@@ -151,6 +160,19 @@ function markdownNode(html) {
   div.className = "rendered-note";
   div.innerHTML = html;
   return div;
+}
+
+/// Uploaded HTML is arbitrary, unlike a note's own markdown -- sandboxed
+/// with no tokens at all (no scripts, no same-origin, no top-navigation) so
+/// even a DOMPurify miss can't execute or reach the dashboard's session.
+/// `.srcdoc` is a property assignment, not an attribute string, so it needs
+/// no manual escaping.
+function htmlDocumentNode(sanitizedHtml, large) {
+  const iframe = document.createElement("iframe");
+  iframe.sandbox = "";
+  iframe.srcdoc = sanitizedHtml;
+  iframe.className = large ? "lightbox-html" : "preview-html";
+  return iframe;
 }
 
 /// A full-viewport overlay for any content -- images, video, rendered
@@ -260,7 +282,10 @@ function itemHead(item) {
   return head;
 }
 
-function renderItem(item, { onDownload, onEdit, onDelete, onRenderNote, onResolveUrl, onRenderDocument, onRelated }) {
+function renderItem(
+  item,
+  { onDownload, onEdit, onDelete, onRenderNote, onResolveUrl, onRenderDocument, onRenderHtmlDocument, onRelated },
+) {
   const el = document.createElement("article");
   el.className = "item";
   el.append(itemHead(item));
@@ -351,18 +376,26 @@ function renderItem(item, { onDownload, onEdit, onDelete, onRenderNote, onResolv
   }
 
   // Previewable files: load the content inline on demand, with a fullscreen
-  // escape hatch. Markdown documents render through the same pipeline as
-  // notes (fetch text, then onRenderDocument); everything else resolves to
-  // a signed URL and gets a native media element.
-  if (pKind === "markdown" ? onRenderDocument : pKind && onResolveUrl) {
+  // escape hatch. Markdown and HTML documents each go through their own
+  // fetch-then-convert pipeline (raw text -> rendered/sanitized string,
+  // via `textPreview.load`); everything else resolves to a signed URL and
+  // gets a native media element.
+  const textPreview =
+    pKind === "markdown"
+      ? { load: onRenderDocument, build: markdownNode }
+      : pKind === "html"
+        ? { load: onRenderHtmlDocument, build: htmlDocumentNode }
+        : null;
+
+  if (textPreview || (pKind && onResolveUrl)) {
     let url = null;
-    let html = null;
+    let content = null;
 
     const previewBtn = document.createElement("button");
     previewBtn.className = "ghost small";
     previewBtn.textContent = "Preview";
     previewBtn.onclick = async () => {
-      if (url || html) {
+      if (url || content) {
         previewBox.hidden = !previewBox.hidden;
         previewBtn.textContent = previewBox.hidden ? "Preview" : "Hide preview";
         return;
@@ -370,9 +403,9 @@ function renderItem(item, { onDownload, onEdit, onDelete, onRenderNote, onResolv
       previewBtn.disabled = true;
       previewBtn.textContent = "Loading…";
       try {
-        if (pKind === "markdown") {
-          html = await onRenderDocument(item);
-          previewBox.replaceChildren(markdownNode(html));
+        if (textPreview) {
+          content = await textPreview.load(item);
+          previewBox.replaceChildren(textPreview.build(content, false));
         } else {
           url = await onResolveUrl(item);
           previewBox.replaceChildren(buildMediaNode(pKind, url, item, false));
@@ -397,9 +430,9 @@ function renderItem(item, { onDownload, onEdit, onDelete, onRenderNote, onResolv
       const originalText = fsBtn.textContent;
       fsBtn.textContent = "Loading…";
       try {
-        if (pKind === "markdown") {
-          if (!html) html = await onRenderDocument(item);
-          openLightbox(() => markdownNode(html));
+        if (textPreview) {
+          if (!content) content = await textPreview.load(item);
+          openLightbox(() => textPreview.build(content, true));
         } else {
           if (!url) url = await onResolveUrl(item);
           openLightbox(() => buildMediaNode(pKind, url, item, true));

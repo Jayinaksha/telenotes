@@ -43,3 +43,15 @@ export async function renderNoteHtml(text) {
   const withMath = rendered.replace(/@@TELENOTES-MATH-(\d+)@@/g, (_, i) => math[Number(i)]);
   return DOMPurify.sanitize(withMath);
 }
+
+/// Sanitizes an uploaded HTML document for the sandboxed preview iframe.
+/// `WHOLE_DOCUMENT` keeps the doctype/html/head/body structure intact
+/// (unlike `renderNoteHtml`'s fragment output, this goes into an iframe's
+/// `srcdoc`, not `innerHTML` on an existing element, so there's a real head
+/// to preserve). Sanitization here is defense-in-depth, not the primary
+/// guard -- the iframe's empty `sandbox` attribute is what actually stops
+/// anything that gets through from executing.
+export async function sanitizeHtml(html) {
+  const { DOMPurify } = await load();
+  return DOMPurify.sanitize(html, { WHOLE_DOCUMENT: true });
+}

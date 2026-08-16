@@ -8,7 +8,7 @@ import {
   signOut,
 } from "./supabase.js";
 import * as api from "./api.js";
-import { renderNoteHtml } from "./markdown.js";
+import { renderNoteHtml, sanitizeHtml } from "./markdown.js";
 import { fetchItems, fetchStats, fetchTags } from "./data.js";
 import {
   flash,
@@ -211,6 +211,7 @@ function render() {
     onRenderNote: (item) => renderNoteHtml(item.content_text),
     onResolveUrl: (item) => api.resolveUrl(item),
     onRenderDocument,
+    onRenderHtmlDocument,
     onRelated: (item) => api.relatedItems(item.id),
   });
 }
@@ -223,6 +224,16 @@ async function onRenderDocument(item) {
   const resp = await fetch(url);
   if (!resp.ok) throw new Error(`couldn't fetch file (${resp.status})`);
   return renderNoteHtml(await resp.text());
+}
+
+/// Same fetch as onRenderDocument, but for an uploaded HTML file: sanitized
+/// only, not run through the markdown parser -- it's already the format we
+/// want to display, not source to convert.
+async function onRenderHtmlDocument(item) {
+  const url = await api.resolveUrl(item, { raw: true });
+  const resp = await fetch(url);
+  if (!resp.ok) throw new Error(`couldn't fetch file (${resp.status})`);
+  return sanitizeHtml(await resp.text());
 }
 
 async function onDownload(item, btn) {

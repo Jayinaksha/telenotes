@@ -6,6 +6,7 @@ use telenotes_core::Item;
 use uuid::Uuid;
 
 use crate::botclient::BotClient;
+use crate::html;
 use crate::markdown;
 use crate::session::Session;
 use crate::supabase::{DayCount, StorageRow, SupabaseClient, TagCount};
@@ -642,20 +643,28 @@ impl App {
     }
 
     /// Fetches and renders a document's own text when it looks like
-    /// markdown, so Detail can show more than just the file name. Notes
-    /// already show their text via `content_text` (no fetch needed); any
-    /// other document kind (PDF, image, ...) has no plain-text rendering
-    /// story here, so `detail_body` just stays `None` for those.
+    /// markdown or HTML, so Detail can show more than just the file name.
+    /// Notes already show their text via `content_text` (no fetch needed);
+    /// any other document kind (PDF, image, ...) has no plain-text
+    /// rendering story here, so `detail_body` just stays `None` for those.
     async fn load_detail_body(&mut self) {
         self.detail_body = None;
         let Some(item) = self.items.get(self.selected).cloned() else {
             return;
         };
-        if item.kind == "note"
-            || !markdown::is_markdown_document(item.file_name.as_deref(), item.mime_type.as_deref())
-        {
+        if item.kind == "note" {
             return;
         }
+        let file_name = item.file_name.as_deref();
+        let mime_type = item.mime_type.as_deref();
+        let render: fn(&str) -> Vec<Line<'static>> =
+            if markdown::is_markdown_document(file_name, mime_type) {
+                markdown::render
+            } else if html::is_html_document(file_name, mime_type) {
+                html::render
+            } else {
+                return;
+            };
         if !self.ensure_fresh_session().await {
             return;
         }
@@ -670,7 +679,7 @@ impl App {
         match self.bot.download(&token).await {
             Ok(bytes) => {
                 let text = String::from_utf8_lossy(&bytes);
-                self.detail_body = Some(markdown::render(&text));
+                self.detail_body = Some(render(&text));
             }
             Err(e) => self.set_status(format!("could not load preview: {e}")),
         }

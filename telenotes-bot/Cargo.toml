@@ -41,3 +41,4 @@ url = "2.5.8"
 # ToSql/FromSql, which tokio-postgres uses directly -- no separate driver.
 pgvector = { version = "0.4", features = ["postgres"] }
 pdf-extract = "0.7"
+pulldown-cmark = { version = "0.13.4", default-features = false }

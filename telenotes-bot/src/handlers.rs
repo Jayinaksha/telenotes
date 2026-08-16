@@ -3,7 +3,7 @@ use chrono::Datelike;
 use telenotes_core::text::{extract_tags, sanitize, slugify};
 use telenotes_core::Item;
 use teloxide::prelude::*;
-use teloxide::types::{FileId, FileMeta, InputFile, MessageKind, Update, UpdateKind};
+use teloxide::types::{FileId, FileMeta, InputFile, MessageKind, ParseMode, Update, UpdateKind};
 use uuid::Uuid;
 
 use crate::db::{self, NewFile};
@@ -747,7 +747,18 @@ async fn reply_with_list(
 async fn send_item(state: &AppState, chat_id: ChatId, item: &Item) -> Result<()> {
     if item.kind == "note" {
         let text = item.content_text.clone().unwrap_or_default();
-        state.bot.send_message(chat_id, text).await?;
+        let formatted = crate::telegram_format::render(&text);
+        let sent = state
+            .bot
+            .send_message(chat_id, formatted)
+            .parse_mode(ParseMode::Html)
+            .await;
+        if sent.is_err() {
+            // Best-effort formatting: some pathological input could in
+            // principle produce markup Telegram's HTML parser rejects.
+            // /get should never hard-fail just because of that.
+            state.bot.send_message(chat_id, text).await?;
+        }
         return Ok(());
     }
 

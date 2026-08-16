@@ -6,6 +6,7 @@ mod handlers;
 mod notion;
 mod pdf;
 mod storage;
+mod telegram_format;
 
 use std::sync::Arc;
 
