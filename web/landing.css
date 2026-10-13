@@ -1,0 +1,107 @@
+/* The public landing that signed-out visitors see above the sign-in form.
+   It speaks Plate — the design system shared by every site under
+   jayinaksha.github.io — but every rule is scoped under .tn so nothing here
+   can leak into the dashboard's own style.css. */
+
+@font-face{font-family:"Saira Cond";src:url(assets/plate/fonts/SairaCond-800.woff2) format("woff2");font-weight:800;font-display:swap}
+@font-face{font-family:"Plex Sans";src:url(assets/plate/fonts/PlexSans-100_700.woff2) format("woff2");font-weight:100 700;font-display:swap}
+@font-face{font-family:"Plex Mono";src:url(assets/plate/fonts/PlexMono-500.woff2) format("woff2");font-weight:500;font-display:swap}
+
+.tn{
+  --ground:#0E1114;--plate:#14181D;--plate2:#1A2027;--edge:#262E37;--edge-hi:#38424E;
+  --steel:#8A96A3;--chalk:#E2E7EC;--accent:#4E9A63;--accent-hi:#7DC492;--sense:#7FA3B8;
+  --grid:rgba(226,231,236,.045);
+  --f-display:"Saira Cond","Arial Narrow",sans-serif;--f-sans:"Plex Sans",system-ui,sans-serif;--f-mono:"Plex Mono",ui-monospace,monospace;
+  background:var(--ground);color:var(--chalk);font:16px/1.6 var(--f-sans);
+}
+@media (prefers-color-scheme:light){
+  .tn{--ground:#D8D5CF;--plate:#E3E1DC;--plate2:#EDEBE7;--edge:#C0BCB4;--edge-hi:#A49E95;--steel:#565D66;--chalk:#13171B;
+    --accent:#2F7A44;--accent-hi:#2F7A44;--sense:#3C5F76;--grid:rgba(19,23,27,.06)}
+}
+.tn *,.tn *::before,.tn *::after{box-sizing:border-box}
+.tn a{color:inherit}
+.tn p,.tn h1,.tn h2,.tn h3{margin:0}
+.tn .shell{max-width:1180px;margin:0 auto;padding:0 clamp(16px,3vw,28px)}
+.tn .lbl{font:500 .6875rem/1.4 var(--f-mono);letter-spacing:.15em;text-transform:uppercase;color:var(--steel)}
+.tn .lbl--accent{color:var(--accent)}
+
+.tn-bar{position:sticky;top:0;z-index:20;background:color-mix(in srgb,var(--ground) 88%,transparent);
+  backdrop-filter:blur(10px);border-bottom:1px solid var(--edge)}
+.tn-bar .shell{display:flex;align-items:center;gap:16px;height:56px}
+.tn-home{display:inline-flex;align-items:center;gap:10px;text-decoration:none}
+.tn-mark{width:26px;height:26px;display:grid;place-items:center;background:var(--accent);color:#fff;font:800 .82rem/1 var(--f-display)}
+.tn-name{font:800 .95rem/1 var(--f-display);text-transform:uppercase;letter-spacing:.06em}
+.tn-crumb{color:var(--steel)}
+.tn-bar .tn-btn{margin-left:auto}
+
+.tn-hero{position:relative;padding:clamp(40px,7vw,88px) 0 clamp(40px,5vw,64px);border-bottom:1px solid var(--edge);overflow:hidden}
+.tn-hero::before{content:"";position:absolute;inset:0;pointer-events:none;
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:64px 64px;-webkit-mask-image:radial-gradient(120% 90% at 30% 0%,#000 20%,transparent 78%);mask-image:radial-gradient(120% 90% at 30% 0%,#000 20%,transparent 78%)}
+.tn-hero>*{position:relative}
+.tn-word{font:800 clamp(3.4rem,11vw,8rem)/.8 var(--f-display);text-transform:uppercase;letter-spacing:-.015em}
+.tn-word span{display:block;color:transparent;-webkit-text-stroke:1.5px var(--accent)}
+.tn-tag{font:500 .75rem var(--f-mono);letter-spacing:.22em;text-transform:uppercase;color:var(--accent);margin-top:24px}
+.tn-grid{display:grid;gap:clamp(28px,4vw,52px);margin-top:clamp(28px,4vw,48px)}
+.tn-grid>*{min-width:0}
+@media (min-width:920px){.tn-grid{grid-template-columns:minmax(0,1fr) minmax(0,1.05fr);align-items:start}}
+.tn-deck{font-size:clamp(1.04rem,1.5vw,1.18rem);color:var(--steel);max-width:50ch}
+.tn-deck b{color:var(--chalk);font-weight:600}
+.tn-btns{display:flex;flex-wrap:wrap;gap:10px;margin-top:22px}
+.tn-btn{display:inline-flex;font:500 .75rem var(--f-mono);letter-spacing:.08em;text-transform:uppercase;text-decoration:none;
+  border:1px solid var(--edge);padding:11px 16px;background:var(--plate);color:var(--chalk)}
+.tn-btn:hover{border-color:var(--accent-hi);color:var(--accent-hi)}
+.tn-btn--solid{background:var(--accent);border-color:var(--accent);color:#fff}
+.tn-btn--solid:hover{color:#fff;filter:brightness(1.1)}
+.tn-spec{display:grid;grid-template-columns:repeat(2,1fr);gap:1px;background:var(--edge);border:1px solid var(--edge);margin-top:30px}
+@media (min-width:560px){.tn-spec{grid-template-columns:repeat(4,1fr)}}
+.tn-spec div{background:var(--plate);padding:14px}
+.tn-spec b{display:block;font:800 1.6rem/1 var(--f-display)}
+.tn-spec span{display:block;margin-top:7px}
+
+.tn-reel{position:relative;aspect-ratio:16/9;overflow:hidden;border:1px solid var(--edge-hi);background:var(--plate2)}
+.tn-reel video{width:100%;height:100%;object-fit:cover;display:block}
+.tn-reel::after{content:"";position:absolute;inset:0;background:linear-gradient(0deg,rgba(0,0,0,.55),transparent 34%);pointer-events:none}
+.tn-hud{position:absolute;left:14px;right:14px;bottom:12px;z-index:1;display:flex;justify-content:space-between;
+  font:500 .625rem var(--f-mono);letter-spacing:.14em;text-transform:uppercase;color:#E2E7EC}
+.tn-hud span:first-child::before{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;background:#E5484D;margin-right:7px}
+.tn-cap{margin-top:10px;color:var(--steel);font-size:.92rem}
+
+.tn-sect{padding:clamp(52px,7vw,96px) 0;border-bottom:1px solid var(--edge)}
+.tn-head{display:flex;gap:16px;align-items:baseline;margin-bottom:12px}
+.tn-head h2{font:800 clamp(1.8rem,4vw,2.7rem)/.95 var(--f-display);text-transform:uppercase}
+.tn-sub{color:var(--steel);max-width:60ch;margin-bottom:28px}
+.tn-scope{overflow-x:auto;border:1px solid var(--edge);background:var(--plate);padding:8px;
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);background-size:24px 24px}
+.tn-scope svg{display:block;width:100%;min-width:720px;height:auto}
+.tn-box{fill:var(--plate2);stroke:var(--edge-hi)}
+.tn-box--hot{stroke:var(--accent)}
+.tn-t{font:800 14px var(--f-display);fill:var(--chalk);text-transform:uppercase}
+.tn-f{font:500 9.5px var(--f-mono);fill:var(--steel)}
+.tn-w{stroke:var(--sense);stroke-width:1.4;fill:none}
+.tn-w--hot{stroke:var(--accent)}
+.tn-pkt{fill:var(--accent-hi)}
+.tn-notes{display:grid;gap:1px;background:var(--edge);border:1px solid var(--edge);margin-top:22px}
+@media (min-width:860px){.tn-notes{grid-template-columns:repeat(3,1fr)}}
+.tn-note{background:var(--plate);padding:20px}
+.tn-note h3{font-size:1.02rem;margin:8px 0 6px}
+.tn-note p{color:var(--steel);font-size:.9rem}
+.tn code{font:500 .85em var(--f-mono);border:1px solid var(--edge);padding:1px 6px;background:var(--ground)}
+
+/* the sign-in panel keeps its own dashboard styling; just give it room */
+.tn-signin{padding:clamp(40px,6vw,80px) 0}
+.tn-signin .panel.entry{margin:18px auto 0}
+.tn-signin-head{text-align:center}
+.tn-foot{padding:36px 0 48px;border-top:1px solid var(--edge)}
+.tn-foot .shell{display:flex;flex-wrap:wrap;gap:10px 18px;justify-content:space-between}
+.tn-foot nav{display:flex;flex-wrap:wrap;gap:6px 16px}
+.tn-foot a{text-decoration:none}
+.tn-foot a:hover{color:var(--accent-hi)}
+
+@media (prefers-reduced-motion:no-preference){
+  .tn-pkt{animation:tn-travel var(--dur,1s) linear infinite;animation-delay:var(--delay,0s)}
+  .tn-hud span:first-child::before{animation:tn-blink 1.2s steps(2,start) infinite}
+}
+@media (prefers-reduced-motion:reduce){.tn-pkt{display:none}}
+@keyframes tn-travel{from{offset-distance:0%}to{offset-distance:100%}}
+@keyframes tn-blink{to{visibility:hidden}}

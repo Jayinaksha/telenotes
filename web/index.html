@@ -3,29 +3,132 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="robots" content="noindex, nofollow">
-  <title>telenotes</title>
+  <title>telenotes — Telegram in, notes you own out</title>
+  <meta name="description" content="Send a Telegram message and it is a searchable note. Files, voice notes and video are archived to storage you control — markdown in your own git repo. A Rust bot, a web dashboard and a terminal client, on free-tier infrastructure.">
+  <link rel="canonical" href="https://jayinaksha.github.io/telenotes/">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="telenotes — Telegram in, notes you own out">
+  <meta property="og:description" content="Capture from Telegram into markdown in your own git repo. Rust bot, web dashboard, terminal client.">
+  <meta property="og:url" content="https://jayinaksha.github.io/telenotes/">
+  <meta property="og:image" content="https://jayinaksha.github.io/telenotes/assets/og.jpg">
+  <meta property="og:image:width" content="1200"><meta property="og:image:height" content="630">
+  <meta name="twitter:card" content="summary_large_image">
   <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="landing.css">
   <!-- Only fetched because the browser needs it to lay out KaTeX's markup; the
        renderer itself (marked/katex/dompurify, see markdown.js) loads on demand,
        the first time a note is actually rendered. -->
   <link rel="stylesheet" href="https://esm.sh/katex@0.16.9/dist/katex.min.css">
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='13'>&#128221;</text></svg>">
+  <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
 </head>
 <body>
-  <!-- Signed out -->
-  <section id="view-auth" class="panel entry" hidden>
-    <p class="entry-brand mono">telenotes</p>
-    <h2>Sign in</h2>
-    <p class="muted">
-      We'll email you a one-time link. No password to remember.
-    </p>
-    <form id="form-signin">
-      <input id="email" type="email" required placeholder="you@example.com" autocomplete="email">
-      <button type="submit">Send magic link</button>
-    </form>
-    <p id="auth-msg" class="msg" hidden></p>
-  </section>
+  <!-- Signed out: the public landing, then the sign-in form. Visible by
+       default so visitors and crawlers see it before (or without) JS; app.js
+       hides it once a session is found. -->
+  <div id="view-auth" class="tn">
+    <header class="tn-bar">
+      <div class="shell">
+        <a class="tn-home" href="https://jayinaksha.github.io/portfolio/" aria-label="Jayinaksha Vyas — portfolio">
+          <span class="tn-mark" aria-hidden="true">JV</span><span class="tn-name">Jayinaksha</span>
+        </a>
+        <span class="lbl tn-crumb">/ telenotes</span>
+        <a class="tn-btn" href="#signin">Sign in</a>
+      </div>
+    </header>
+
+    <section class="tn-hero">
+      <div class="shell">
+        <p class="lbl">Rust · Telegram · free tier</p>
+        <h1 class="tn-word" style="margin-top:22px">tele<span>notes</span></h1>
+        <p class="tn-tag">Telegram in · notes you own out</p>
+        <div class="tn-grid">
+          <div>
+            <p class="tn-deck">Send a message to a Telegram bot and it is a <b>searchable note</b>. Send a PDF, photo,
+              voice memo or video and it is archived. It all lands as <b>markdown in a git repo you own</b> — not a
+              vendor’s database.</p>
+            <div class="tn-btns">
+              <a class="tn-btn tn-btn--solid" href="#signin">Open the dashboard</a>
+              <a class="tn-btn" href="https://github.com/Jayinaksha/telenotes">Source on GitHub</a>
+            </div>
+            <div class="tn-spec">
+              <div><b>3</b><span class="lbl">Clients, one bot</span></div>
+              <div><b>1</b><span class="lbl">Process holds keys</span></div>
+              <div><b>.md</b><span class="lbl">In your own git</span></div>
+              <div><b>0</b><span class="lbl">Cost — free tiers</span></div>
+            </div>
+          </div>
+          <figure style="margin:0">
+            <div class="tn-reel">
+              <video src="assets/media/telenotes-chat.mp4" poster="assets/media/telenotes-chat.jpg" muted loop playsinline autoplay
+                aria-label="A Telegram chat with the telenotes bot saving notes, a file and a voice message."></video>
+              <div class="tn-hud"><span>Telegram · capture</span><span>real session</span></div>
+            </div>
+            <figcaption class="tn-cap">Text, files and a voice note, captured from a phone.</figcaption>
+          </figure>
+        </div>
+      </div>
+    </section>
+
+    <section class="tn-sect">
+      <div class="shell">
+        <div class="tn-head"><span class="lbl lbl--accent">§ 01</span><h2>One bot holds the keys</h2></div>
+        <p class="tn-sub">Every client asks the bot; only the bot ever touches GitHub, R2 or Postgres credentials.</p>
+        <div class="tn-scope">
+          <svg viewBox="0 0 900 230" role="img" aria-label="Telegram, the web dashboard and the terminal client all talk to the Rust bot, which writes notes to a GitHub vault, files to Cloudflare R2, and metadata to Postgres.">
+            <rect class="tn-box" x="10" y="20" width="190" height="50"/><text class="tn-t" x="24" y="50">Telegram</text>
+            <rect class="tn-box" x="10" y="90" width="190" height="50"/><text class="tn-t" x="24" y="120">Web dashboard</text>
+            <rect class="tn-box" x="10" y="160" width="190" height="50"/><text class="tn-t" x="24" y="190">Terminal · Ratatui</text>
+            <rect class="tn-box tn-box--hot" x="340" y="80" width="200" height="70"/><text class="tn-t" x="356" y="110">telenotes-bot</text><text class="tn-f" x="356" y="130">Rust · teloxide · axum</text>
+            <rect class="tn-box" x="680" y="20" width="210" height="50"/><text class="tn-t" x="694" y="44">GitHub vault</text><text class="tn-f" x="694" y="60">notes as markdown</text>
+            <rect class="tn-box" x="680" y="90" width="210" height="50"/><text class="tn-t" x="694" y="114">Cloudflare R2</text><text class="tn-f" x="694" y="130">files</text>
+            <rect class="tn-box" x="680" y="160" width="210" height="50"/><text class="tn-t" x="694" y="184">Postgres</text><text class="tn-f" x="694" y="200">metadata + search</text>
+            <path class="tn-w" d="M200 45 H270 V115 H340"/><path class="tn-w" d="M200 115 H340"/><path class="tn-w" d="M200 185 H270 V115"/>
+            <path class="tn-w tn-w--hot" d="M540 115 H610 V45 H680"/><path class="tn-w tn-w--hot" d="M610 115 H680"/><path class="tn-w tn-w--hot" d="M610 115 V185 H680"/>
+            <circle class="tn-pkt" r="3" style="offset-path:path('M200 45 H270 V115 H340');--dur:1.4s"/>
+            <circle class="tn-pkt" r="3" style="offset-path:path('M540 115 H610 V45 H680');--dur:1.4s;--delay:.7s"/>
+            <circle class="tn-pkt" r="3" style="offset-path:path('M540 115 H610 V185 H680');--dur:1.4s;--delay:1.1s"/>
+          </svg>
+        </div>
+        <div class="tn-notes">
+          <div class="tn-note"><span class="lbl lbl--accent">Capture</span><h3>Anything, from anywhere</h3><p>Text, PDFs, photos, voice and video from Telegram; <code>#tags</code> picked up automatically.</p></div>
+          <div class="tn-note"><span class="lbl lbl--accent">Find</span><h3>Full-text and by meaning</h3><p>Postgres full-text search, plus optional embeddings for “related” and semantic search.</p></div>
+          <div class="tn-note"><span class="lbl lbl--accent">Own</span><h3>Leaving costs nothing</h3><p>Notes are diffable markdown in your repo; files in your bucket. No export format to escape.</p></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="tn-signin" id="signin">
+      <div class="shell tn-signin-head">
+        <div class="tn-head" style="justify-content:center"><span class="lbl lbl--accent">§ 02</span><h2>Your notes</h2></div>
+        <p class="tn-sub" style="margin-inline:auto">Already run the bot? Sign in to browse, search and edit.</p>
+      </div>
+      <section class="panel entry">
+        <p class="entry-brand mono">telenotes</p>
+        <h2>Sign in</h2>
+        <p class="muted">
+          We'll email you a one-time link. No password to remember.
+        </p>
+        <form id="form-signin">
+          <input id="email" type="email" required placeholder="you@example.com" autocomplete="email">
+          <button type="submit">Send magic link</button>
+        </form>
+        <p id="auth-msg" class="msg" hidden></p>
+      </section>
+    </section>
+
+    <footer class="tn-foot">
+      <div class="shell">
+        <span class="lbl">Built by <a href="https://jayinaksha.github.io/portfolio/">Jayinaksha Vyas</a> · Apache-2.0</span>
+        <nav class="lbl" aria-label="Other projects">
+          <a href="https://jayinaksha.github.io/">jayinaksha.github.io</a>
+          <a href="https://jayinaksha.github.io/portfolio/projects/telenotes/">Case study</a>
+          <a href="https://jayinaksha.github.io/agentic-bot/">R2-D2 Redux</a>
+          <a href="https://jayinaksha.github.io/iron-overview/">Iron</a>
+          <a href="https://jayinaksha.github.io/slate/">Slate</a>
+        </nav>
+      </div>
+    </footer>
+  </div>
 
   <!-- Signed in, but no Telegram account attached yet -->
   <section id="view-link" class="panel entry" hidden>
